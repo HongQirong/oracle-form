@@ -1,0 +1,96 @@
+WHEN-NEW-RECORD-INSTANCE：
+
+DECLARE
+    C_RECORD   NUMBER := :SYSTEM.trigger_record;
+BEGIN
+    IF :SYSTEM.RECORD_STATUS = 'NEW'
+    THEN
+        :block_name.column_name := :SYSTEM.trigger_record;
+
+        IF :SYSTEM.LAST_RECORD = 'TRUE'
+        THEN
+            SET_RECORD_PROPERTY (:SYSTEM.trigger_record,
+                                 'block_name',
+                                 STATUS,
+                                 NEW_STATUS);
+        ELSIF :SYSTEM.RECORD_STATUS = 'INSERT'
+        THEN
+            IF :PARAMETER.CREATE_FLAG = 'Y'
+            THEN
+                :PARAMETER.CREATE_FLAG := 'N';
+                DELETE_RECORD;
+                :block_name.column_name := :SYSTEM.CURSOR_record + 1;
+
+                LOOP
+                    EXIT WHEN :SYSTEM.LAST_RECORD = 'TRUE';
+                    NEXT_RECORD;
+                    :block_name.column_name := :SYSTEM.CURSOR_record + 1;
+                END LOOP;
+
+                GO_RECORD (C_RECORD - 1);
+                CREATE_RECORD;
+            END IF;
+        END IF;
+    END IF;
+
+
+    IF :block_name.column_name != :SYSTEM.CURSOR_record
+    THEN
+        :block_name.column_name := :SYSTEM.CURSOR_record;
+
+        LOOP
+            EXIT WHEN :SYSTEM.LAST_RECORD = 'TRUE';
+            NEXT_RECORD;
+            :block_name.column_name := :SYSTEM.CURSOR_record;
+        END LOOP;
+
+        GO_RECORD (C_RECORD);
+    END IF;
+    
+    IF :SYSTEM.TRIGGER_RECORD = 1
+    THEN
+        IF GET_RECORD_PROPERTY (
+               GET_BLOCK_PROPERTY ('block_name_header', CURRENT_RECORD),
+               'block_name_header',
+               STATUS) =
+           'INSERT'
+        THEN
+            IF :SYSTEM.RECORD_STATUS = 'NEW'
+            THEN
+                SET_RECORD_PROPERTY (
+                    GET_BLOCK_PROPERTY ('block_name_header', CURRENT_RECORD),
+                    'block_name_header',
+                    STATUS,
+                    NEW_STATUS);
+            END IF;
+        END IF;
+    END IF;
+END;
+
+/
+
+WHEN-VALIDATE-RECORD：
+
+BEGIN
+    IF     :block_name.column_name IS NOT NULL
+       AND :block_name.column_name = :SYSTEM.TRIGGER_RECORD
+    THEN
+        :PARAMETER.CREATE_FLAG := 'Y';
+    END IF;
+
+
+
+    IF GET_RECORD_PROPERTY (
+           GET_BLOCK_PROPERTY ('XXTPBOMF003_H', CURRENT_RECORD),
+           'XXTPBOMF003_H',
+           STATUS) =
+       'NEW'
+    THEN
+        SET_RECORD_PROPERTY (
+            GET_BLOCK_PROPERTY ('XXTPBOMF003_H', CURRENT_RECORD),
+            'XXTPBOMF003_H',
+            STATUS,
+            INSERT_STATUS);
+    END IF;
+END;
+/
