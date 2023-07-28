@@ -1,0 +1,68 @@
+DECLARE
+   l_user_id fnd_user.user_id%TYPE;
+   l_resp_id fnd_responsibility.responsibility_id%TYPE;
+   l_appl_id fnd_application.application_id%TYPE;
+   l_appl_short_name fnd_application_vl.application_short_name%TYPE;
+   l_ou_value fnd_profile_option_values.profile_option_value%TYPE;
+   l_sp_value fnd_profile_option_values.profile_option_value%TYPE;
+   l_sp_value_name per_security_profiles.security_profile_name%TYPE;
+BEGIN
+   SELECT user_id
+     INTO l_user_id
+     FROM fnd_user
+    WHERE user_name = UPPER('x');
+
+   SELECT responsibility_id
+     INTO l_resp_id
+     FROM fnd_responsibility_vl
+    WHERE responsibility_name = ('x');
+
+   SELECT application_id
+         ,application_short_name
+     INTO l_appl_id
+         ,l_appl_short_name
+     FROM fnd_application_vl
+    WHERE UPPER(application_name) = UPPER('應付帳款管理系統');
+
+   l_ou_value := fnd_profile.value_specific('ORG_ID'
+                                           ,l_user_id
+                                           ,l_resp_id
+                                           ,l_appl_id);
+   l_sp_value := fnd_profile.value_specific('XLA_MO_SECURITY_PROFILE_LEVEL'
+                                           ,l_user_id
+                                           ,l_resp_id
+                                           ,l_appl_id);
+   DBMS_OUTPUT.put_line('MO: Operating Unit: '
+                        || l_ou_value);
+   DBMS_OUTPUT.put_line('MO: Security Profile: '
+                        || l_sp_value);
+
+   BEGIN
+      SELECT psp.security_profile_name
+        INTO l_sp_value_name
+        FROM per_security_profiles psp
+       WHERE psp.security_profile_id = l_sp_value;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         NULL;
+   END;
+
+   DBMS_OUTPUT.put_line('MO: Security Profile Name: '
+                        || l_sp_value_name);
+
+   IF l_sp_value IS NULL
+      AND l_ou_value IS NULL
+   THEN
+      DBMS_OUTPUT.put_line('No operating unit or security profile information    found');
+   ELSE
+      mo_global.set_org_access(l_ou_value
+                              ,l_sp_value
+                              ,l_appl_short_name);
+   END IF;
+EXCEPTION
+   WHEN OTHERS
+   THEN
+      DBMS_OUTPUT.put_line('Error: '
+                           || SQLERRM);
+END;
