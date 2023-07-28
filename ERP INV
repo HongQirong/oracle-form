@@ -1,0 +1,24 @@
+   SELECT si.organization_id
+         ,od.organization_code
+         ,od.organization_name
+         ,si.secondary_inventory_name
+         ,si.description 　
+         ,si.attribute1 gl_dept
+         ,si.attribute2 storage_properties
+         ,si.attribute6 custody_dept
+         ,TO_CHAR(si.creation_date
+                 ,'YYYY/MM/DD HH24:MI:SS')
+             AS erp_creation_date
+         ,TO_CHAR(si.last_update_date
+                 ,'YYYY/MM/DD HH24:MI:SS')
+             AS erp_last_update_date
+         ,emp.employee_number
+         ,fu.description user_name
+         ,si.disable_date
+     FROM mtl_secondary_inventories si
+         ,org_organization_definitions od
+         ,fnd_user fu
+         ,per_all_people_f emp
+    WHERE si.organization_id = od.organization_id
+          AND si.last_updated_by = fu.user_id(+)
+          AND fu.employee_id = emp.person_id(+);
