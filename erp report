@@ -1,0 +1,45 @@
+BEGIN
+   apps.fnd_file.put_line(apps.fnd_file.LOG
+                         ,'--------------------');
+   apps.fnd_file.put_line(apps.fnd_file.LOG
+                         ,'start');
+   apps.fnd_file.put_line(apps.fnd_file.LOG
+                         ,fnd_profile.VALUE('ICX_CLIENT_IANA_ENCODING'));
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'<?xml version="1.0"?>');
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'<ROWSET>');
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'<REPORT_NAME>XX</REPORT_NAME>');
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'<G_GROUP number="'
+                          || j
+                          || '">'); --群組開始
+
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'    <DATE>'
+                          || SYSDATE
+                          || '</DATE>'); --明細
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,  '    <XX>'
+                            || SYSDATE
+                          - 1
+                          || '</XX>'); --明細
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'    <XX>'
+                          || REPLACE('H<H'
+                                    ,'<'
+                                    ,CHR(38)
+                                     || 'lt;')
+                          || '</XX>');
+
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'</G_GROUP>'); --群組結束
+   apps.fnd_file.put_line(apps.fnd_file.output
+                         ,'</ROWSET>');
+
+   apps.fnd_file.put_line(apps.fnd_file.LOG
+                         ,'end');
+   apps.fnd_file.put_line(apps.fnd_file.LOG
+                         ,'--------------------');
+END;
