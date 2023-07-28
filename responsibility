@@ -1,0 +1,4 @@
+  SELECT *
+    FROM fnd_responsibility_vl
+   WHERE UPPER (responsibility_key) LIKE UPPER ('x%')
+ORDER BY UPPER (responsibility_key) DESC
