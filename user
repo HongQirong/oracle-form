@@ -1,0 +1,29 @@
+SELECT *
+  FROM (SELECT u.user_name
+              ,(SELECT r.responsibility_name
+                  FROM fnd_responsibility_vl r
+                 WHERE r.responsibility_id = ur.responsibility_id
+                       AND r.application_id = ur.responsibility_application_id)
+                  responsibility_name
+              ,(SELECT application_name
+                  FROM fnd_application_vl a
+                 WHERE a.application_id = ur.responsibility_application_id)
+                  application_name
+              ,ur.*
+          FROM fnd_user_resp_groups_direct ur
+              ,fnd_user u
+         WHERE u.user_id = ur.user_id)
+ WHERE responsibility_name LIKE 'x%'
+       AND user_name LIKE '%';
+
+SELECT fnd_profile.VALUE('USERNAME') username
+      ,fnd_profile.VALUE('ORG_ID') org_id
+      ,fnd_profile.VALUE('USER_ID') user_id
+      ,fnd_profile.VALUE('resp_id') resp_id
+      ,fnd_profile.VALUE('resp_appl_id') resp_appl_id
+  FROM DUAL;
+BEGIN
+   fnd_global.apps_initialize(user_id => 7038
+                             ,resp_id => 50778
+                             ,resp_appl_id => 222);
+END;
