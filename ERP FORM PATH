@@ -1,0 +1,43 @@
+SELECT fffv.function_id
+  FROM fnd_form_vl ffv
+      ,fnd_application_vl fav
+      ,fnd_form_functions_vl fffv
+ WHERE ffv.application_id = fav.application_id
+       AND ffv.form_id = fffv.form_id
+       AND ffv.form_name like 'XX%';
+
+SELECT frv.responsibility_name
+      ,m.user_menu_name
+      ,fffv.user_function_name
+      ,m.user_menu_name_path
+  FROM (    SELECT fmb.menu_id
+                  ,CONNECT_BY_ROOT fmb.menu_id m_menu_id
+                  --                                  ,CONNECT_BY_ROOT fmb.menu_name m_menu_name
+                  ,fmb.menu_name
+                  ,fmb.user_menu_name
+                  ,SYS_CONNECT_BY_PATH(REPLACE(fmb.menu_name
+                                              ,'/'
+                                              ,'')
+                                      ,'/')
+                      menu_name_path
+                  ,SYS_CONNECT_BY_PATH(REPLACE(fmb.user_menu_name
+                                              ,'/'
+                                              ,'')
+                                      ,'/')
+                      user_menu_name_path
+                  ,LEVEL lv
+                  ,fmev.function_id
+              FROM fnd_menus_vl fmb
+                  ,fnd_menu_entries_vl fmev
+             WHERE fmb.menu_id = fmev.menu_id
+        CONNECT BY PRIOR fmev.sub_menu_id = fmev.menu_id --ORDER SIBLINGS BY fmb.menu_id
+                                                        ) m
+      ,fnd_form_vl ffv
+      ,fnd_application_vl fav
+      ,fnd_form_functions_vl fffv
+      ,fnd_responsibility_vl frv
+ WHERE ffv.application_id = fav.application_id
+       AND ffv.form_id = fffv.form_id
+       AND m.function_id = fffv.function_id
+       AND frv.menu_id = m.m_menu_id
+       AND ffv.form_name like 'XX%';
