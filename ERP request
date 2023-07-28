@@ -1,0 +1,24 @@
+SELECT frv.*
+      ,fcpv.user_concurrent_program_name
+      ,frg.request_group_code
+  FROM apps.fnd_concurrent_programs_vl fcpv
+      ,applsys.fnd_request_group_units frgu
+      ,applsys.fnd_request_groups frg
+      ,apps.fnd_responsibility_vl frv
+ WHERE fcpv.user_concurrent_program_name like '%XX%'
+       AND fcpv.concurrent_program_id = frgu.request_unit_id
+       AND frgu.request_group_id = frg.request_group_id
+       AND frg.request_group_id = frv.request_group_id;
+
+SELECT fnd_webfile.get_url(file_type => 4
+                          , --輸出類行
+                           id => 40396935
+                          , --Request_id
+                           gwyuid => ''
+                          , --不使用
+                           two_task => ''
+                          , --不使用
+                           expire_time => 5 --URL保留分鐘數
+                                            )
+          url
+  FROM DUAL
