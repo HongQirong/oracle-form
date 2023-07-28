@@ -1,0 +1,73 @@
+--查詢新增業務員所屬部門的業務員
+--通常選擇筆數較多的業務員
+
+  SELECT hou.name ou_name
+        ,gcc.segment2 "參照部門"
+        ,gcc.segment4 "參照業務員"
+        ,COUNT(*)
+    --SELECT ART.*
+    --SELECT MAX(GCC.SEGMENT4) AS SALES_NO
+    FROM hr_operating_units hou
+        ,ar_receivables_trx_all art
+        ,gl_code_combinations gcc
+   WHERE hou.organization_id = art.org_id
+         AND art.code_combination_id = gcc.code_combination_id
+         AND gcc.segment2 = '參照的業務部門' --參照業務員部門優先同新增業務員部門
+GROUP BY hou.name
+        ,gcc.segment2
+        ,gcc.segment4
+ORDER BY 4 DESC;
+
+--找新增業務員的部門
+
+SELECT DISTINCT gcc.segment2 --'新增業務員的部門
+  FROM gl_code_combinations gcc
+ WHERE gcc.segment4 = '新增業務員的代碼' --新增業務員
+--新增業務員調整項
+;
+SELECT hou.name ou_name
+      ,'\{TAB}'
+      ,REPLACE(REPLACE(art.name
+                      ,gcc.segment4
+                      ,gcc1.segment4)
+              ,gcc.segment2
+              ,gcc1.segment2)
+          adj_name
+      ,'\{TAB}'
+      ,art.description
+      ,'\{TAB}\{TAB}\{TAB}\{TAB}'
+      ,DECODE(art.tax_code_source,  'NONE', '\{TAB}',  'INVOICE', '\{DOWN}\{DOWN}\{TAB}\{TAB}',  '\{TAB}') tax_code
+      ,art.description
+      ,'\{DOWN}'
+  FROM hr_operating_units hou
+      ,ar_receivables_trx_all art
+      ,gl_code_combinations gcc --參照組
+      ,gl_code_combinations gcc1 --新增組
+ WHERE hou.organization_id = art.org_id
+       AND art.code_combination_id = gcc.code_combination_id
+       AND gcc.segment1 = gcc1.segment1
+       --AND GCC.SEGMENT2 = GCC1.SEGMENT2
+       AND gcc.segment3 = gcc1.segment3
+       AND gcc.segment2 = '參照業務員的部門'
+       --                       --'參照業務員的部門'       --參照業務員部門優先同新增業務員部門
+       AND gcc.segment4 = '參照業務員的代碼' --參照業務員
+       /*自動找參照部門最新工號
+       AND GCC.SEGMENT4 IN  (
+                                                       SELECT MAX(GCC3.SEGMENT4)
+                                                       FROM GL_CODE_COMBINATIONS   GCC3
+                                                                   ,AR_RECEIVABLES_TRX_ALL ART
+                                                       WHERE GCC3.SEGMENT2=GCC.SEGMENT2    --找參照部門最新工號
+                                                       AND  GCC3.CODE_COMBINATION_ID=ART.CODE_COMBINATION_ID
+                                                       )
+       */
+       --新增業務需請總帳人員先建好會計科目
+
+       AND gcc1.segment2 = '新增業務員的部門'
+       /*自動找新增業務員的部門
+       AND GCC1.SEGMENT2 IN (
+                                                           SELECT DISTINCT GCC5.SEGMENT2      --'新增業務員的部門
+                                                           FROM GL_CODE_COMBINATIONS   GCC5
+                                                           WHERE GCC5.SEGMENT4= GCC1.SEGMENT4--'新增業務員的代碼'  --新增業務員
+                                                         )
+       */
+       AND gcc1.segment4 IN ('新增業務員的代碼') --'新增業務員的代碼' --新增業務員
