@@ -1,0 +1,3 @@
+SELECT *
+  FROM applsys.fnd_lookup_values
+ WHERE lookup_code = ''
