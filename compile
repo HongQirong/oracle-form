@@ -1,0 +1,5 @@
+cd $AU_TOP/forms/ZHT
+frmcmp_batch XX.fmb userid=account/password output_file=$XX_TOP/forms/ZHT/XX.fmx
+  
+frmcmp_batch XX.fmb userid=account/password
+cp XX.fmx $XX_TOP/forms/US
