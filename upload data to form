@@ -1,0 +1,413 @@
+PACKAGE BODY file_pkg
+IS
+   FUNCTION open_file
+      RETURN NUMBER
+   IS
+      access_id NUMBER;
+      l_server_url VARCHAR2(255);
+      l_url VARCHAR2(255);
+      fle_gfm_id NUMBER;
+      button_choice NUMBER;
+   BEGIN
+      -- Get process ID
+      access_id := fnd_gfm.authorize(NULL);
+
+      -- Get web server address
+      fnd_profile.get('APPS_WEB_AGENT'
+                     ,l_server_url);
+
+      -- Call web page
+      l_url := RTRIM(l_server_url
+                    ,'/')
+               || '/fnd_file_upload.displayGFMform?access_id='
+               || TO_CHAR(access_id)
+               || CHR(38)
+               || 'l_server_url='
+               || l_server_url;
+
+      IF (l_url IS NULL)
+      THEN
+         RAISE form_trigger_failure;
+      END IF;
+
+      -- Open web page
+      fnd_utilities.open_url(l_url);
+
+      -- This action is waiting for user select file, and check upload
+      fnd_message.set_name('FND'
+                          ,'ATCHMT-FILE-UPLOAD-COMPLETE');
+
+      button_choice := fnd_message.question(button1 => 'YES'
+                                           ,button2 => NULL
+                                           ,button3 => 'NO'
+                                           ,default_btn => 1
+                                           ,cancel_btn => 3
+                                           ,icon => 'question');
+
+      -- Get file ID
+      fle_gfm_id := fnd_gfm.get_file_id(access_id);
+
+      IF fle_gfm_id IS NOT NULL
+         AND fle_gfm_id > 0
+      THEN
+         IF button_choice = 1
+         THEN
+            RETURN fle_gfm_id; -- File is selected and upload
+         ELSE
+            RETURN 0; -- File is selected but not upload
+         END IF;
+      ELSE
+         RETURN -1; -- File is not selected
+      END IF;
+   END open_file;
+
+
+   --- 開始解讀檔案內容
+
+   PROCEDURE load_excel(p_block         VARCHAR2 --要匯入的畫面區塊
+                       ,p_field         VARCHAR2 --要匯入的畫面欄位名
+                       ,p_col_separate  VARCHAR2 --chr()--空字串為Null--分行符號
+                       ,p_row_separate  VARCHAR2 --chr()--空字串為Null--分欄符號
+                       ,p_begin_row     NUMBER DEFAULT 1 --讀取的起始列
+                       ,p_begin_column  NUMBER DEFAULT 1 --讀取的起始行
+                                                        )
+   IS
+      fle_gfm_id NUMBER;
+      v_file VARCHAR2(1000);
+      --
+      v_row_sep VARCHAR2(10);
+      v_col_sep VARCHAR2(10);
+      v_comma_exist BOOLEAN := FALSE;
+      --
+      my_field DBMS_UTILITY.uncl_array;
+      my_field_cnt BINARY_INTEGER;
+      my_field_loc BINARY_INTEGER := 1;
+      --
+      i NUMBER;
+      file_len NUMBER;
+      file_loc NUMBER; -- File location
+      temp_data VARCHAR2(10000);
+      temp_tab VARCHAR2(10000);
+      enter_loc NUMBER; -- ENTER_KEY location on temp buffer
+      tab_loc NUMBER; -- TAB_KEY location on temp buffer
+      tab_loc_old NUMBER; -- TAB_KEY location on temp buffer
+      --      counter NUMBER := 0;
+      control_language NUMBER;
+      v_period VARCHAR2(20);
+      v_date DATE;
+      v_date_name VARCHAR2(20);
+      v_mesg_level VARCHAR2(10);
+   BEGIN
+      --Sperate p_field to MY_FIELD (Example: 'x,y,z' -> 'x', 'y', 'z')
+      DBMS_UTILITY.comma_to_table(p_field
+                                 ,my_field_cnt
+                                 ,my_field);
+
+      --Check all columns is exist BLACK.FIELD
+      FOR i IN 1 .. my_field_cnt
+      LOOP
+         my_field(i) := LTRIM(RTRIM(my_field(i)));
+
+         DECLARE
+            item_id item;
+         BEGIN
+            item_id := FIND_ITEM(p_block
+                                 || '.'
+                                 || my_field(i));
+
+            IF ID_NULL(item_id)
+            THEN
+               fnd_message.debug('Item : '
+                                 || p_block
+                                 || '.'
+                                 || my_field(i)
+                                 || ' does not exist !!');
+               RAISE form_trigger_failure;
+            END IF;
+         END;
+      END LOOP;
+
+      -- Get column separate char
+      IF UPPER(p_col_separate) IS NULL
+      THEN
+         v_col_sep := CHR(9); --'\t';
+      ELSIF UPPER(p_col_separate) <> 'NULL'
+      THEN
+         v_col_sep := p_col_separate;
+      ELSE
+         v_col_sep := NULL;
+      END IF;
+
+
+
+      -- Get row separate char
+      IF UPPER(p_row_separate) IS NULL
+      THEN
+         v_row_sep := CHR(10); --'\n';
+      ELSIF UPPER(p_row_separate) <> 'NULL'
+      THEN
+         v_row_sep := p_row_separate;
+      ELSE
+         v_row_sep := NULL;
+      END IF;
+
+
+      ------------------------
+      ------------------------
+      -- Open file
+      fle_gfm_id := file_pkg.open_file;
+
+
+
+      IF fle_gfm_id > 0
+      THEN
+         -- Get file length
+         SELECT DBMS_LOB.getlength(file_data)
+           INTO file_len
+           FROM fnd_lobs
+          WHERE 0 = 0
+                AND file_id = fle_gfm_id;
+
+         GO_BLOCK(p_block);
+
+         CLEAR_BLOCK(no_validate);
+
+         -- Select data
+         file_loc := 1;
+         enter_loc := 1;
+
+         FOR r IN 2 .. p_begin_row
+         LOOP
+            -- Find enter key location
+            SELECT DBMS_LOB.INSTR(file_data
+                                 ,UTL_RAW.cast_to_raw(v_row_sep)
+                                 ,file_loc
+                                 ,1)
+              INTO enter_loc
+              FROM fnd_lobs
+             WHERE 0 = 0
+                   AND file_id = fle_gfm_id;
+
+            IF enter_loc > 0
+            THEN
+               file_loc :=   enter_loc
+                           + 1;
+            --               enter_loc :=   enter_loc
+            --                            + 2;
+            ELSE
+               file_loc :=   file_len
+                           + 1;
+            END IF;
+         END LOOP;
+
+         LOOP
+            -- Find enter key location
+            SELECT DBMS_LOB.INSTR(file_data
+                                 ,UTL_RAW.cast_to_raw(v_row_sep)
+                                 ,file_loc
+                                 ,1)
+              INTO enter_loc
+              FROM fnd_lobs
+             WHERE 0 = 0
+                   AND file_id = fle_gfm_id;
+
+
+            BEGIN
+               SELECT DECODE(language, 'US', 1, 2)
+                 INTO control_language
+                 FROM fnd_lobs
+                WHERE 0 = 0
+                      AND file_id = fle_gfm_id;
+            EXCEPTION
+               WHEN NO_DATA_FOUND
+               THEN
+                  control_language := 2;
+            END;
+
+
+
+            IF enter_loc > 0
+            THEN
+               IF control_language = 1
+               THEN
+                  SELECT UTL_RAW.CONVERT(DBMS_LOB.SUBSTR(file_data
+                                                        ,  enter_loc
+                                                         - file_loc
+                                                        ,file_loc)
+                                        ,'AMERICAN_AMERICA.UTF8'
+                                        ,'AMERICAN_AMERICA.ZHT16BIG5')
+                    INTO temp_data
+                    FROM fnd_lobs
+                   WHERE 0 = 0
+                         AND file_id = fle_gfm_id;
+               ELSE
+                  SELECT DBMS_LOB.SUBSTR(file_data
+                                        ,  enter_loc
+                                         - file_loc
+                                        ,file_loc)
+                    INTO temp_data
+                    FROM fnd_lobs
+                   WHERE 0 = 0
+                         AND file_id = fle_gfm_id;
+               END IF;
+
+
+               -- temp_data := LTRIM(RTRIM(UTL_RAW.cast_to_varchar2(temp_data)));
+
+
+               file_loc :=   enter_loc
+                           + 1;
+            --               enter_loc :=   enter_loc
+            --                            + 2;
+            ELSE
+               IF control_language = 1
+               THEN
+                  SELECT UTL_RAW.CONVERT(DBMS_LOB.SUBSTR(file_data
+                                                        ,1000
+                                                        ,file_loc)
+                                        ,'AMERICAN_AMERICA.UTF8'
+                                        ,'AMERICAN_AMERICA.ZHT16BIG5')
+                    INTO temp_data
+                    FROM fnd_lobs
+                   WHERE 0 = 0
+                         AND file_id = fle_gfm_id;
+               ELSE
+                  SELECT DBMS_LOB.SUBSTR(file_data
+                                        ,1000
+                                        ,file_loc)
+                    INTO temp_data
+                    FROM fnd_lobs
+                   WHERE 0 = 0
+                         AND file_id = fle_gfm_id;
+               END IF;
+
+
+               file_loc :=   file_len
+                           + 1;
+            END IF;
+
+
+            temp_data := LTRIM(RTRIM(UTL_RAW.cast_to_varchar2(temp_data)));
+
+            tab_loc := 1;
+            tab_loc_old := 1;
+            my_field_loc := 1;
+
+
+            --            IF counter = 0
+            --            THEN
+            --               NULL;
+            --            ELSE
+
+            FOR r IN 2 .. p_begin_column
+            LOOP
+               tab_loc := INSTR(temp_data
+                               ,v_col_sep
+                               ,tab_loc_old);
+
+               --               fnd_message.debug(tab_loc);
+               --               fnd_message.debug(tab_loc_old);
+
+               IF tab_loc > 0
+               THEN
+                  temp_tab := SUBSTR(temp_data
+                                    ,tab_loc_old
+                                    ,  tab_loc
+                                     - tab_loc_old);
+               ELSE
+                  temp_tab := SUBSTR(temp_data
+                                    ,tab_loc_old);
+               END IF;
+
+               tab_loc_old :=   tab_loc
+                              + 1;
+            END LOOP;
+
+            WHILE (my_field_loc <= my_field_cnt
+                   AND tab_loc > 0)
+            LOOP
+               tab_loc := INSTR(temp_data
+                               ,v_col_sep
+                               ,tab_loc_old);
+
+               --fnd_message.debug(tab_loc);
+               --               fnd_message.debug(tab_loc_old);
+
+               IF tab_loc > 0
+               THEN
+                  temp_tab := SUBSTR(temp_data
+                                    ,tab_loc_old
+                                    ,  tab_loc
+                                     - tab_loc_old);
+               ELSE
+                  temp_tab := SUBSTR(temp_data
+                                    ,tab_loc_old);
+               END IF;
+
+               tab_loc_old :=   tab_loc
+                              + 1;
+
+               COPY(temp_tab
+                   ,p_block
+                    || '.'
+                    || my_field(my_field_loc));
+               my_field_loc :=   my_field_loc
+                               + 1;
+            END LOOP;
+
+            NEXT_RECORD;
+            --            END IF;
+
+            --            counter :=   counter
+            --                       + 1;
+
+
+            EXIT WHEN file_loc >= file_len;
+         END LOOP;
+
+         FIRST_RECORD;
+      END IF;
+
+      ----------------
+      -- Delete temp data
+      IF fle_gfm_id >= 0
+      THEN
+         :parameter.fle_gfm_id := fle_gfm_id;
+      END IF;
+
+      SELECT file_name
+        INTO :parameter.fle_file_name
+        FROM fnd_lobs
+       WHERE 0 = 0
+             AND file_id = fle_gfm_id;
+
+      -- Clear LOB File
+      file_pkg.clear_fnd_lob;
+
+      v_mesg_level := :SYSTEM.message_level;
+      :SYSTEM.message_level := '5';
+      :SYSTEM.message_level := v_mesg_level;
+   END load_excel;
+
+
+   --- 清除 FND_LOB
+
+   PROCEDURE clear_fnd_lob
+   IS
+   BEGIN
+      IF :parameter.fle_gfm_id >= 0
+      THEN
+         COPY('5'
+             ,'system.message_level');
+
+         DELETE fnd_lobs
+          WHERE 0 = 0
+                AND file_id = :parameter.fle_gfm_id;
+
+         STANDARD.commit;
+
+         COPY('0'
+             ,'system.message_level');
+      END IF;
+   END clear_fnd_lob;
+END file_pkg;
