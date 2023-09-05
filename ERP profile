@@ -1,0 +1,60 @@
+SELECT v.profile_option_value
+      ,v.level_id
+      ,ROW_NUMBER() OVER (ORDER BY v.level_id DESC) level_seq
+  FROM fnd_profile_options_vl l
+      ,fnd_profile_option_values v
+ WHERE 1 = 1
+       AND l.profile_option_id = v.profile_option_id
+       AND v.level_value IN (0
+                            ,fnd_global.resp_appl_id
+                            ,fnd_global.resp_id
+                            ,fnd_global.user_id)
+       AND v.level_id IN (10001 --Site
+                         ,10002 --Application
+                         ,10003 --Responsibility
+                         ,10004 --User
+                               )
+       AND l.profile_option_id = 2325 --ICX: 日期格式遮罩
+       AND l.application_id = 178
+       AND 1 = 1;
+
+
+
+  SELECT DISTINCT pot.profile_option_name "PROFILE_CODE"
+                 ,pot.user_profile_option_name "PROFILE_NAME"
+                 ,DECODE(a.profile_option_value,  '1', '1 (may be "Yes")',  '2', '2 (may be "No")',  a.profile_option_value) "PF_VALUE"
+                 ,DECODE(a.level_id,  10001, 'Site',  10002, 'Application',  10003, 'Responsibility',  10004, 'User',  10005, 'Server',  10006, 'Organization',  a.level_id) "LEVEL_IDENTIFIER"
+                 ,DECODE(a.level_id
+                        ,10002, e.application_name
+                        ,10003, c.responsibility_name
+                        ,10004, d.user_name
+                        ,10005, f.HOST
+                                || '.'
+                                || f.domain
+                        ,10006, g.name
+                        ,'-')
+                     "LEVEL_NAME"
+                 ,level_id
+    FROM fnd_application_tl e
+        ,fnd_user d
+        ,fnd_responsibility_tl c
+        ,fnd_profile_option_values a
+        ,fnd_profile_options b
+        ,fnd_profile_options_tl pot
+        ,fnd_nodes f
+        ,hr_all_organization_units g
+   WHERE 1 = 1
+         AND UPPER(pot.user_profile_option_name) LIKE UPPER('MO: Default Operating Unit')
+         AND pot.profile_option_name = b.profile_option_name
+         AND b.application_id = a.application_id(+)
+         AND b.profile_option_id = a.profile_option_id(+)
+         AND a.level_value = c.responsibility_id(+)
+         AND a.level_value = d.user_id(+)
+         AND a.level_value = e.application_id(+)
+         AND a.level_value = f.node_id(+)
+         AND a.level_value = g.organization_id(+)
+         AND pot.language = 'US'
+ORDER BY profile_name
+        ,level_identifier
+        ,level_name
+        ,pf_value;
