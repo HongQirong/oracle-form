@@ -16,12 +16,20 @@ SELECT *
  WHERE responsibility_name LIKE 'x%'
        AND user_name LIKE '%';
 
-SELECT fnd_profile.VALUE('USERNAME') username
+SELECT fnd_profile.VALUE('USERNAME') user_name
       ,fnd_profile.VALUE('ORG_ID') org_id
       ,fnd_profile.VALUE('USER_ID') user_id
       ,fnd_profile.VALUE('resp_id') resp_id
       ,fnd_profile.VALUE('resp_appl_id') resp_appl_id
+      ,fnd_profile.VALUE('login_id') login_id
+      ,fnd_global.user_name
+      ,fnd_global.org_id
+      ,fnd_global.user_id
+      ,fnd_global.resp_id
+      ,fnd_global.resp_appl_id
+      ,fnd_global.login_id
   FROM DUAL;
+
 BEGIN
    fnd_global.apps_initialize(user_id => 7038
                              ,resp_id => 50778
