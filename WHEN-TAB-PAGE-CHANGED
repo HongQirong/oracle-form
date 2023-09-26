@@ -1,0 +1,51 @@
+DECLARE
+   v_tp_name VARCHAR(30);
+   v_block_old_pre_item VARCHAR(100);
+   v_old_block_first_item VARCHAR(100);
+   v_new_block_first_item VARCHAR(100);
+   v_new_block VARCHAR(100);
+BEGIN
+   v_old_block_first_item := :SYSTEM.cursor_block
+                             || '.'
+                             || GET_BLOCK_PROPERTY( :SYSTEM.cursor_block
+                                                  ,first_item);
+   SET_ITEM_PROPERTY(v_old_block_first_item
+                    ,previous_navigation_item
+                    , :SYSTEM.cursor_item);
+   v_tp_name := GET_CANVAS_PROPERTY('TAB'
+                                   ,topmost_tab_page);
+
+   IF v_tp_name = 'PAGE1'
+   THEN
+      v_new_block := 'BLOCK1';
+      HIDE_VIEW('PAGE2');
+   ELSIF v_tp_name = 'PAGE2'
+   THEN
+      v_new_block := 'QUERY_BLOCK2';
+      HIDE_VIEW('PAGE1');
+   END IF;
+
+   v_new_block_first_item := v_new_block
+                             || '.'
+                             || GET_BLOCK_PROPERTY(v_new_block
+                                                  ,first_item);
+   v_block_old_pre_item := v_new_block
+                           || '.'
+                           || GET_ITEM_PROPERTY(v_new_block_first_item
+                                               ,previous_navigation_item);
+
+   IF v_block_old_pre_item = 'QUERY_BLOCK2.ROWID'
+   THEN
+      GO_ITEM('QUERY_BLOCK2.DISPLAY_ITEM');
+   ELSIF v_block_old_pre_item LIKE '%.ROWID'
+   THEN
+      GO_BLOCK(v_new_block);
+   ELSE
+      SET_ITEM_PROPERTY(v_new_block_first_item
+                       ,previous_navigation_item
+                       ,'');
+      GO_ITEM(v_block_old_pre_item);
+   END IF;
+
+   SHOW_VIEW(v_tp_name);
+END;
