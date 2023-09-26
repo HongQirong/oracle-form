@@ -1,0 +1,3 @@
+APP_FIND.QUERY_FIND('MAIN_WIN',
+                    'QUERY_FIND_WIN',
+                    'XX_QUERY_FIND_BLOCK');
