@@ -28,8 +28,6 @@ BEGIN
       v_new_block := 'QUERY_BLOCK2';
    END IF;
 
-   HIDE_VIEW( :SYSTEM.tab_previous_page);
-
    --取得游標上次在區塊的位置，位置記錄在區塊第一個item關聯前一個item
    v_new_block_first_item := v_new_block
                              || '.'
@@ -55,5 +53,6 @@ BEGIN
       GO_ITEM(v_block_old_pre_item); --指定游標到上次在區塊的位置
    END IF;
 
+   HIDE_VIEW( :SYSTEM.tab_previous_page);
    SHOW_VIEW( :SYSTEM.tab_new_page); --顯示PAGE上要用的STACK，因為STACK和PAGE名設成一樣
 END;
