@@ -1,0 +1,6 @@
+BEGIN
+   :parameter.g_query_find := 'TRUE';
+   app_find.find('BLOCK1');
+   HIDE_WINDOW('QUERY_FIND_WIN');
+   :parameter.g_query_find := 'FALSE';
+END;
