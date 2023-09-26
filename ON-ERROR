@@ -6,9 +6,9 @@ DECLARE
    v_dbmserrtext VARCHAR2(4000) := DBMS_ERROR_TEXT;
    v_error_msg VARCHAR2(4000);
 BEGIN
-   IF DBMS_ERROR_CODE = -20000
+   IF DBMS_ERROR_CODE = -20000 --自訂ERROR，在DB用raise_application_error，標準錯誤視窗會有明細按鈕
    THEN
-      app_standard.event('ON-ERROR');
+      app_standard.event('ON-ERROR'); --使用標準錯誤流程
       RAISE form_trigger_failure;
    END IF;
 
