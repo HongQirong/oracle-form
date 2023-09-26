@@ -1,0 +1,35 @@
+DECLARE
+   v_errtyp VARCHAR2(3) := ERROR_TYPE;
+   v_errnum NUMBER := ERROR_CODE;
+   v_errtxt VARCHAR2(4000) := ERROR_TEXT;
+   v_dbmserrcode NUMBER := DBMS_ERROR_CODE;
+   v_dbmserrtext VARCHAR2(4000) := DBMS_ERROR_TEXT;
+   v_error_msg VARCHAR2(4000);
+BEGIN
+   IF DBMS_ERROR_CODE = -20000
+   THEN
+      app_standard.event('ON-ERROR');
+      RAISE form_trigger_failure;
+   END IF;
+
+   v_error_msg := SUBSTR(v_errtyp
+                         || '-'
+                         || TO_CHAR(v_errnum)
+                         || ': '
+                         || v_errtxt
+                        ,1
+                        ,600);
+
+   IF v_dbmserrcode IS NOT NULL
+   THEN
+      v_error_msg := SUBSTR(v_error_msg
+                            || CHR(10)
+                            || v_dbmserrtext
+                           ,1
+                           ,600);
+   END IF;
+
+   fnd_message.set_string(v_error_msg);
+   fnd_message.error;
+   RAISE form_trigger_failure;
+END;
