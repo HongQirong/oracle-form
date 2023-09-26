@@ -18,11 +18,11 @@ BEGIN
    IF v_tp_name = 'PAGE1'
    THEN
       v_new_block := 'BLOCK1';
-      HIDE_VIEW('PAGE2');
+      HIDE_VIEW('STACK2');
    ELSIF v_tp_name = 'PAGE2'
    THEN
       v_new_block := 'QUERY_BLOCK2';
-      HIDE_VIEW('PAGE1');
+      HIDE_VIEW('STACK1');
    END IF;
 
    v_new_block_first_item := v_new_block
