@@ -1,0 +1,4 @@
+Show_View('TAB1');
+Show_View('STACK1');
+Show_View('TAB2');
+Show_View('STACK2');
