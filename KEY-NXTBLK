@@ -3,4 +3,15 @@ BEGIN
    app_find.find('BLOCK1');
    HIDE_WINDOW('QUERY_FIND_WIN');
    :parameter.g_query_find := 'FALSE';
+
+   
+   SET_TAB_PAGE_PROPERTY('TAB1.PAGE2'
+                        ,visible
+                        ,property_false);--隱藏被查詢區塊在的PAGE，為了切換到被查詢區塊在的PAGE
+   SET_TAB_PAGE_PROPERTY('TAB1.PAGE2'
+                        ,visible
+                        ,property_true);--隱藏後要再顯示，不然會看不到標籤，但要放在顯示查詢區塊在的PAGE之前
+   SET_TAB_PAGE_PROPERTY('TAB1.PAGE1'
+                        ,visible
+                        ,property_true);--顯示被查詢區塊在的PAGE
 END;
