@@ -1,5 +1,5 @@
 DECLARE
-   v_tp_name VARCHAR(30);
+   --   v_tp_name VARCHAR(30);
    v_block_old_pre_item VARCHAR(100);
    v_old_block_first_item VARCHAR(100);
    v_new_block_first_item VARCHAR(100);
@@ -14,20 +14,21 @@ BEGIN
    SET_ITEM_PROPERTY(v_old_block_first_item
                     ,previous_navigation_item
                     , :SYSTEM.cursor_item);
-   --取得切換PAGE後，畫面在的page名
-   v_tp_name := GET_CANVAS_PROPERTY('TAB'
-                                   ,topmost_tab_page);
+
+   --   --取得切換PAGE後，畫面在的page名
+   --   v_tp_name := GET_CANVAS_PROPERTY('XXAR_TRANSFER_LINES_TAB'
+   --                                   ,topmost_tab_page);
 
    --切換PAGE後，隱藏同位置現在顯示的STACK，以及存要顯示的區塊到變數，為了指定游標位置
-   IF v_tp_name = 'PAGE1'
+   IF :SYSTEM.tab_new_page = 'PAGE1'
    THEN
       v_new_block := 'BLOCK1';
-      HIDE_VIEW('STACK2');
-   ELSIF v_tp_name = 'PAGE2'
+   ELSIF :SYSTEM.tab_new_page = 'PAGE2'
    THEN
       v_new_block := 'QUERY_BLOCK2';
-      HIDE_VIEW('STACK1');
    END IF;
+
+   HIDE_VIEW( :SYSTEM.tab_previous_page);
 
    --取得游標上次在區塊的位置，位置記錄在區塊第一個item關聯前一個item
    v_new_block_first_item := v_new_block
@@ -38,6 +39,7 @@ BEGIN
                            || '.'
                            || GET_ITEM_PROPERTY(v_new_block_first_item
                                                ,previous_navigation_item);
+
 
    IF v_block_old_pre_item = 'QUERY_BLOCK2.ROWID' --第一次進入區塊，且區塊沒有項目可以輸入值，需要指定游標位置
    THEN
@@ -53,61 +55,5 @@ BEGIN
       GO_ITEM(v_block_old_pre_item); --指定游標到上次在區塊的位置
    END IF;
 
-   SHOW_VIEW(v_tp_name); --顯示PAGE上要用的STACK，因為STACK和PAGE名設成一樣
-END;DECLARE
-   v_tp_name VARCHAR(30);
-   v_block_old_pre_item VARCHAR(100);
-   v_old_block_first_item VARCHAR(100);
-   v_new_block_first_item VARCHAR(100);
-   v_new_block VARCHAR(100);
-BEGIN
-   --目前游標在區塊的第一個item
-   v_old_block_first_item := :SYSTEM.cursor_block
-                             || '.'
-                             || GET_BLOCK_PROPERTY( :SYSTEM.cursor_block
-                                                  ,first_item);
-   --目前游標在的item，記錄到第一個item關聯前一個item，為了切換page後，再回去時，游標還能在原來的item
-   SET_ITEM_PROPERTY(v_old_block_first_item
-                    ,previous_navigation_item
-                    , :SYSTEM.cursor_item);
-   --取得切換PAGE後，畫面在的page名
-   v_tp_name := GET_CANVAS_PROPERTY('TAB'
-                                   ,topmost_tab_page);
-
-   --切換PAGE後，隱藏同位置現在顯示的STACK，以及存要顯示的區塊到變數，為了指定游標位置
-   IF v_tp_name = 'PAGE1'
-   THEN
-      v_new_block := 'BLOCK1';
-      HIDE_VIEW('STACK2');
-   ELSIF v_tp_name = 'PAGE2'
-   THEN
-      v_new_block := 'QUERY_BLOCK2';
-      HIDE_VIEW('STACK1');
-   END IF;
-
-   --取得游標上次在區塊的位置，位置記錄在區塊第一個item關聯前一個item
-   v_new_block_first_item := v_new_block
-                             || '.'
-                             || GET_BLOCK_PROPERTY(v_new_block
-                                                  ,first_item);
-   v_block_old_pre_item := v_new_block
-                           || '.'
-                           || GET_ITEM_PROPERTY(v_new_block_first_item
-                                               ,previous_navigation_item);
-
-   IF v_block_old_pre_item = 'QUERY_BLOCK2.ROWID' --第一次進入區塊，且區塊沒有項目可以輸入值，需要指定游標位置
-   THEN
-      GO_ITEM('QUERY_BLOCK2.DISPLAY_ITEM');
-   ELSIF v_block_old_pre_item LIKE '%.ROWID' --第一次進入區塊
-   THEN
-      GO_BLOCK(v_new_block); --游標直接到預設item
-   ELSE
-      --清除游標上次在區塊的位置
-      SET_ITEM_PROPERTY(v_new_block_first_item
-                       ,previous_navigation_item
-                       ,'');
-      GO_ITEM(v_block_old_pre_item); --指定游標到上次在區塊的位置
-   END IF;
-
-   SHOW_VIEW(v_tp_name); --顯示PAGE上要用的STACK，因為STACK和PAGE名設成一樣
+   SHOW_VIEW( :SYSTEM.tab_new_page); --顯示PAGE上要用的STACK，因為STACK和PAGE名設成一樣
 END;
