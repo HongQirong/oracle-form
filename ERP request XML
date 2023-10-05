@@ -1,0 +1,481 @@
+DECLARE
+   p_table VARCHAR2(30) := UPPER('APPS.table');
+   p_group_order VARCHAR2(4000) := UPPER('column1/column2,column3/column4');
+   p_result VARCHAR2(1); --S是成功，E是錯誤
+   p_error_msg VARCHAR2(4000);
+   p_msg VARCHAR2(4000);
+
+   TYPE l_vvt IS TABLE OF VARCHAR2(4000)
+      INDEX BY VARCHAR2(4000);
+
+   TYPE l_btt IS TABLE OF l_vvt --VARCHAR2(40)
+      INDEX BY BINARY_INTEGER;
+
+   TYPE l_bvt IS TABLE OF VARCHAR2(4000) --VARCHAR2(40)
+      INDEX BY BINARY_INTEGER;
+
+   TYPE l_bvtt IS TABLE OF l_bvt --VARCHAR2(40)
+      INDEX BY BINARY_INTEGER;
+
+   l_column_value_arr l_vvt;
+   l_group_arr l_btt;
+   l_next_group_flag_arr l_bvt;
+   l_column_name_arr l_bvt;
+   l_group_column_arr l_bvtt;
+   l_row_num NUMBER := 0;
+
+   l_query VARCHAR2(4000);
+   l_dummy NUMBER;
+   --TYPE column_map_type IS TABLE OF NUMBER INDEX BY VARCHAR2(32767);
+
+   query2 VARCHAR2(32767);
+   query3 VARCHAR2(32767);
+
+   l_cursor INTEGER;
+   l_description_table DBMS_SQL.desc_tab3;
+   --l_mapping_table column_map_type;
+   l_column_value VARCHAR2(4000);
+
+   l_cursor_1 INTEGER;
+   l_description_table_1 DBMS_SQL.desc_tab3;
+   --l_mapping_table_1 column_map_type;
+   l_column_value_1 VARCHAR2(4000);
+
+   l_cursor_2 INTEGER;
+   l_description_table_2 DBMS_SQL.desc_tab3;
+   --l_mapping_table_2 column_map_type;
+   l_column_value_2 VARCHAR2(4000);
+
+   l_cursor_3 INTEGER;
+   l_description_table_3 DBMS_SQL.desc_tab3;
+   --l_mapping_table_3 column_map_type;
+   l_column_value_3 VARCHAR2(4000);
+
+   l_fetch_row NUMBER;
+   v_error EXCEPTION; --本程式有錯， 拋例外統一處理錯誤訊息
+   v_call_error EXCEPTION; --呼叫的程式拋出例外，且已有紀錄錯誤程式行
+BEGIN
+   DBMS_OUTPUT.enable(buffer_size => NULL);
+
+   fnd_file.put_line(fnd_file.output
+                    ,'<?xml version = ''1.0'' encoding = ''UTF-8''?>');
+   fnd_file.new_line(fnd_file.output
+                    ,1);
+   fnd_file.put_line(fnd_file.output
+                    ,'<MAIN>');
+   fnd_file.new_line(fnd_file.output
+                    ,1);
+   DBMS_OUTPUT.put_line('<?xml version = ''1.0'' encoding = ''UTF-8''?>');
+   DBMS_OUTPUT.put_line('<MAIN>');
+
+   IF p_table IS NOT NULL
+   THEN
+      l_query := 'select * from '
+                 || p_table
+                 || ' order by ';
+
+      SELECT l_query
+             || REPLACE(p_group_order
+                       ,'/'
+                       ,',')
+                st
+        INTO l_query
+        FROM DUAL;
+
+      DBMS_OUTPUT.put_line('l_query = '
+                           || l_query);
+   END IF;
+
+   --印參數
+   IF (l_query IS NOT NULL)
+   THEN
+      l_cursor := DBMS_SQL.open_cursor;
+      DBMS_SQL.parse(l_cursor
+                    ,l_query
+                    ,DBMS_SQL.native);
+      DBMS_SQL.describe_columns3(l_cursor
+                                ,l_dummy
+                                ,l_description_table);
+
+      FOR i IN 1 .. l_description_table.COUNT
+      LOOP
+         DBMS_SQL.define_column(l_cursor
+                               ,i
+                               ,l_column_value
+                               ,4000);
+      END LOOP;
+
+      l_dummy := DBMS_SQL.execute(l_cursor);
+      DBMS_OUTPUT.put_line('l_dummy = '
+                           || l_dummy);
+      DBMS_OUTPUT.put_line('p_group_order = '
+                           || p_group_order);
+
+      LOOP
+         EXIT WHEN DBMS_SQL.fetch_rows(l_cursor) <= 0;
+         l_row_num :=   l_row_num
+                      + 1;
+
+         FOR i IN 1 .. l_description_table.COUNT
+         LOOP
+            IF INSTR(TRANSLATE(','
+                               || p_group_order
+                               || ','
+                              ,'/ '
+                              ,',')
+                    ,','
+                     || l_description_table(i).col_name
+                     || ',') = 0
+            THEN
+               CONTINUE;
+            END IF;
+
+            DBMS_SQL.COLUMN_VALUE(l_cursor
+                                 ,i
+                                 ,l_column_value);
+
+            SELECT REPLACE(l_column_value
+                          ,CHR(39)
+                          ,CHR(38)
+                           || 'apos;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,'"'
+                          ,CHR(38)
+                           || 'quot;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,CHR(38)
+                          ,CHR(38)
+                           || 'amp;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,'<'
+                          ,CHR(38)
+                           || 'lt;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,'>'
+                          ,CHR(38)
+                           || 'gt;')
+              INTO l_column_value
+              FROM DUAL;
+
+
+            FOR r_group IN (    SELECT REGEXP_SUBSTR(st
+                                                    ,'[^, ]+'
+                                                    ,1
+                                                    ,LEVEL)
+                                          group_column
+                                      ,ROWNUM group_seq
+                                  FROM (SELECT p_group_order st FROM DUAL)
+                            CONNECT BY REGEXP_SUBSTR(st
+                                                    ,'[^, ]+'
+                                                    ,1
+                                                    ,LEVEL)
+                                          IS NOT NULL) --用","分列
+            LOOP
+               FOR r_column IN (    SELECT REGEXP_SUBSTR(st
+                                                        ,'[^/ ]+'
+                                                        ,1
+                                                        ,LEVEL)
+                                              column_name
+                                          ,ROWNUM column_seq
+                                      FROM (SELECT r_group.group_column st FROM DUAL) --每一個群組取第一個"_"之後的字串
+                                CONNECT BY REGEXP_SUBSTR(st
+                                                        ,'[^/ ]+'
+                                                        ,1
+                                                        ,LEVEL)
+                                              IS NOT NULL) --用"/"分列
+               LOOP
+                  IF r_column.column_name != l_description_table(i).col_name
+                  THEN
+                     CONTINUE;
+                  END IF;
+
+                  IF l_group_arr.EXISTS(r_group.group_seq)
+                     AND l_group_arr(r_group.group_seq).EXISTS(r_column.column_name)
+                     AND l_group_arr(r_group.group_seq)(r_column.column_name) = l_column_value
+                  THEN
+                     CONTINUE;
+                  ELSE
+                     l_column_value_arr(r_column.column_name) := l_column_value;
+                     l_group_arr(r_group.group_seq) := l_column_value_arr;
+                     l_next_group_flag_arr(r_group.group_seq) := 'Y';
+                     --                     DBMS_OUTPUT.put_line('r_column.column_seq = '
+                     --                                          || r_column.column_seq);
+                     --                     DBMS_OUTPUT.put_line('r_column.column_name = '
+                     --                                          || r_column.column_name);
+                     --                     DBMS_OUTPUT.put_line('r_group.group_seq = '
+                     --                                          || r_group.group_seq);
+
+                     l_column_name_arr(r_column.column_seq) := r_column.column_name;
+                     l_group_column_arr(r_group.group_seq) := l_column_name_arr;
+                  END IF;
+               END LOOP;
+            END LOOP;
+         --            DBMS_OUTPUT.put_line('l_group = '
+         --                                 || l_group(1)('PAY_GROUP'));
+         --            DBMS_OUTPUT.put_line('l_group = '
+         --                                 || l_group(1)('DUE_DATE'));
+         --            DBMS_OUTPUT.put_line('l_group = '
+         --                                 || l_group(2)('VENDOR_ID'));
+         --            DBMS_OUTPUT.put_line('l_group = '
+         --                                 || l_group(2)('BATCH_NAME'));
+
+         END LOOP;
+
+         FOR r_g_seq IN 1 .. l_next_group_flag_arr.COUNT
+         LOOP
+            IF l_next_group_flag_arr.EXISTS(  r_g_seq
+                                            - 1)
+               AND l_next_group_flag_arr(  r_g_seq
+                                         - 1) = 'Y'
+            THEN
+               l_next_group_flag_arr(r_g_seq) := 'Y';
+            END IF;
+         END LOOP;
+
+
+         IF l_row_num > 1
+         THEN
+            FOR r_seq IN REVERSE 1 .. l_group_arr.COUNT
+            LOOP
+               IF l_next_group_flag_arr(r_seq) = 'N'
+               THEN
+                  CONTINUE;
+               END IF;
+
+               apps.fnd_file.put_line(apps.fnd_file.output
+                                     ,'</G'
+                                      || r_seq
+                                      || '>');
+               DBMS_OUTPUT.put_line('</G'
+                                    || r_seq
+                                    || '>');
+            END LOOP;
+         END IF;
+
+         FOR r_g_seq IN 1 .. l_group_arr.COUNT
+         LOOP
+            IF l_next_group_flag_arr(r_g_seq) = 'N'
+            THEN
+               CONTINUE;
+            END IF;
+
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'<G'
+                                   || r_g_seq
+                                   || '>');
+            DBMS_OUTPUT.put_line('<G'
+                                 || r_g_seq
+                                 || '>');
+
+            FOR r_c_seq IN 1 .. l_group_column_arr(r_g_seq).COUNT
+            LOOP
+               fnd_file.put(fnd_file.output
+                           ,'<'
+                            || l_group_column_arr(r_g_seq)(r_c_seq)
+                            || '>');
+
+               fnd_file.put(fnd_file.output
+                           ,l_group_arr(r_g_seq)(l_group_column_arr(r_g_seq)(r_c_seq)));
+               fnd_file.put_line(fnd_file.output
+                                ,'</'
+                                 || l_group_column_arr(r_g_seq)(r_c_seq)
+                                 || '>');
+               DBMS_OUTPUT.put('<'
+                               || l_group_column_arr(r_g_seq)(r_c_seq)
+                               || '>');
+               DBMS_OUTPUT.put(l_group_arr(r_g_seq)(l_group_column_arr(r_g_seq)(r_c_seq)));
+               DBMS_OUTPUT.put_line('<'
+                                    || l_group_column_arr(r_g_seq)(r_c_seq)
+                                    || '>');
+            END LOOP;
+
+            l_next_group_flag_arr(r_g_seq) := 'N';
+         END LOOP;
+
+         FOR i IN 1 .. l_description_table.COUNT
+         LOOP
+            IF INSTR(TRANSLATE(p_group_order
+                              ,'/ '
+                              ,',')
+                    ,','
+                     || l_description_table(i).col_name
+                     || ',') > 0
+            THEN
+               CONTINUE;
+            END IF;
+
+            DBMS_SQL.COLUMN_VALUE(l_cursor
+                                 ,i
+                                 ,l_column_value);
+
+            SELECT REPLACE(l_column_value
+                          ,CHR(39)
+                          ,CHR(38)
+                           || 'apos;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,'"'
+                          ,CHR(38)
+                           || 'quot;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,CHR(38)
+                          ,CHR(38)
+                           || 'amp;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,'<'
+                          ,CHR(38)
+                           || 'lt;')
+              INTO l_column_value
+              FROM DUAL;
+
+            SELECT REPLACE(l_column_value
+                          ,'>'
+                          ,CHR(38)
+                           || 'gt;')
+              INTO l_column_value
+              FROM DUAL;
+
+            IF i = 1
+            THEN
+               apps.fnd_file.put_line(apps.fnd_file.output
+                                     ,'<G>');
+               DBMS_OUTPUT.put_line('<G>');
+            END IF;
+
+            fnd_file.put(fnd_file.output
+                        ,'<'
+                         || l_description_table(i).col_name
+                         || '>');
+            fnd_file.put(fnd_file.output
+                        ,l_column_value);
+            fnd_file.put_line(fnd_file.output
+                             ,'</'
+                              || l_description_table(i).col_name
+                              || '>');
+
+            DBMS_OUTPUT.put('<'
+                            || l_description_table(i).col_name
+                            || '>');
+            DBMS_OUTPUT.put(l_column_value);
+            DBMS_OUTPUT.put_line('</'
+                                 || l_description_table(i).col_name
+                                 || '>');
+         END LOOP;
+
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'</G>');
+         DBMS_OUTPUT.put_line('</G>');
+      END LOOP;
+
+      FOR r_seq IN REVERSE 1 .. l_group_arr.COUNT
+      LOOP
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'</G'
+                                || r_seq
+                                || '>');
+         DBMS_OUTPUT.put_line('</G'
+                              || r_seq
+                              || '>');
+      END LOOP;
+
+
+      DBMS_SQL.close_cursor(l_cursor);
+   END IF;
+
+   DBMS_OUTPUT.put('<ERRMSG>');
+   DBMS_OUTPUT.put('');
+   DBMS_OUTPUT.put_line('</ERRMSG>');
+   DBMS_OUTPUT.put_line('</MAIN>');
+   fnd_file.put(fnd_file.output
+               ,'<ERRMSG>');
+   fnd_file.put(fnd_file.output
+               ,'');
+   fnd_file.put_line(fnd_file.output
+                    ,'</ERRMSG>');
+   fnd_file.new_line(fnd_file.output
+                    ,1);
+   fnd_file.put_line(fnd_file.output
+                    ,'</MAIN>');
+   fnd_file.new_line(fnd_file.output
+                    ,1);
+EXCEPTION
+   WHEN v_call_error
+   THEN
+      p_result := 'E';
+   WHEN v_error
+   THEN
+      p_result := 'E';
+      p_error_msg := SUBSTR(p_error_msg
+                            || CHR(10)
+                            || '此次執行的程式:'
+                            || CHR(10)
+                            || DBMS_UTILITY.format_error_stack
+                            || DBMS_UTILITY.format_error_backtrace
+                            || DBMS_UTILITY.format_call_stack
+                           ,1
+                           ,600);
+      fnd_file.put(fnd_file.output
+                  ,'<ERRMSG>');
+      fnd_file.put(fnd_file.output
+                  ,p_error_msg);
+      fnd_file.put_line(fnd_file.output
+                       ,'</ERRMSG>');
+      fnd_file.new_line(fnd_file.output
+                       ,1);
+      fnd_file.put_line(fnd_file.output
+                       ,'</MAIN>');
+      fnd_file.new_line(fnd_file.output
+                       ,1);
+      DBMS_OUTPUT.put('<ERRMSG>');
+      DBMS_OUTPUT.put(p_error_msg);
+      DBMS_OUTPUT.put_line('</ERRMSG>');
+      DBMS_OUTPUT.put_line('</MAIN>');
+   WHEN OTHERS
+   THEN
+      p_result := 'E';
+      p_error_msg := SUBSTR(p_error_msg
+                            || CHR(10)
+                            || '此次執行的程式:'
+                            || CHR(10)
+                            || DBMS_UTILITY.format_error_stack
+                            || DBMS_UTILITY.format_error_backtrace
+                            || DBMS_UTILITY.format_call_stack
+                           ,1
+                           ,600);
+      fnd_file.put(fnd_file.output
+                  ,'<ERRMSG>');
+      fnd_file.put(fnd_file.output
+                  ,p_error_msg);
+      fnd_file.put_line(fnd_file.output
+                       ,'</ERRMSG>');
+      fnd_file.new_line(fnd_file.output
+                       ,1);
+      fnd_file.put_line(fnd_file.output
+                       ,'</MAIN>');
+      fnd_file.new_line(fnd_file.output
+                       ,1);
+      DBMS_OUTPUT.put('<ERRMSG>');
+      DBMS_OUTPUT.put(p_error_msg);
+      DBMS_OUTPUT.put_line('</ERRMSG>');
+      DBMS_OUTPUT.put_line('</MAIN>');
+END;
