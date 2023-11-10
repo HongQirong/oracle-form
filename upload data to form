@@ -9,6 +9,14 @@ IS
       fle_gfm_id NUMBER;
       button_choice NUMBER;
    BEGIN
+      fnd_message.set_string('此操作會先清空畫面資料，若之前有存檔，請放心，資料仍然會在系統中，請確認是否要上傳?');
+      button_choice := fnd_message.question;
+
+      IF button_choice != 1
+      THEN
+         RETURN 0;
+      END IF;
+
       -- Get process ID
       access_id := fnd_gfm.authorize(NULL);
 
@@ -43,7 +51,6 @@ IS
                                            ,default_btn => 1
                                            ,cancel_btn => 3
                                            ,icon => 'question');
-
       -- Get file ID
       fle_gfm_id := fnd_gfm.get_file_id(access_id);
 
@@ -97,6 +104,7 @@ IS
       v_date DATE;
       v_date_name VARCHAR2(20);
       v_mesg_level VARCHAR2(10);
+      v_error_msg VARCHAR2(4000);
    BEGIN
       --Sperate p_field to MY_FIELD (Example: 'x,y,z' -> 'x', 'y', 'z')
       DBMS_UTILITY.comma_to_table(p_field
@@ -375,11 +383,14 @@ IS
          :parameter.fle_gfm_id := fle_gfm_id;
       END IF;
 
-      SELECT file_name
-        INTO :parameter.fle_file_name
-        FROM fnd_lobs
-       WHERE 0 = 0
-             AND file_id = fle_gfm_id;
+      FOR r IN (SELECT file_name
+                  FROM fnd_lobs
+                 WHERE 0 = 0
+                       AND file_id = fle_gfm_id)
+      LOOP
+         :parameter.fle_file_name := r.file_name;
+      END LOOP;
+
 
       -- Clear LOB File
       file_pkg.clear_fnd_lob;
