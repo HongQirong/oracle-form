@@ -354,7 +354,9 @@ IS
 
                tab_loc_old :=   tab_loc
                               + 1;
-
+               temp_tab := REGEXP_REPLACE(temp_tab
+                                         ,'^[[:space:]]+|[[:space:]]+$'
+                                         ,'');--去掉各種空白
                COPY(temp_tab
                    ,p_block
                     || '.'
