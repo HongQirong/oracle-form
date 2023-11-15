@@ -35,3 +35,16 @@ BEGIN
                              ,resp_id => 50778
                              ,resp_appl_id => 222);
 END;
+BEGIN
+   mo_global.set_org_access(fnd_profile.value_specific('ORG_ID'
+                                                      ,fnd_global.user_id
+                                                      ,fnd_global.resp_id
+                                                      ,fnd_global.resp_appl_id)
+                           ,fnd_profile.value_specific('XLA_MO_SECURITY_PROFILE_LEVEL'
+                                                      ,fnd_global.user_id
+                                                      ,fnd_global.resp_id
+                                                      ,fnd_global.resp_appl_id)
+                           ,fnd_global.application_short_name);
+END;
+
+SELECT apps.mo_global.check_access(81) FROM DUAL;
