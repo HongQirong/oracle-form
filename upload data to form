@@ -9,7 +9,7 @@ IS
       fle_gfm_id NUMBER;
       button_choice NUMBER;
    BEGIN
-      fnd_message.set_string('此操作會先清空畫面資料，若之前有存檔，請放心，資料仍然會在系統中，請確認是否要上傳?');
+      fnd_message.set_string('此操作會先清空畫面的資料，若還未存檔，當前畫面資料不會更新到系統，請確認是否要上傳?');
       button_choice := fnd_message.question;
 
       IF button_choice != 1
@@ -219,7 +219,6 @@ IS
              WHERE 0 = 0
                    AND file_id = fle_gfm_id;
 
-
             BEGIN
                SELECT DECODE(language, 'US', 1, 2)
                  INTO control_language
@@ -232,68 +231,65 @@ IS
                   control_language := 2;
             END;
 
-
-
             IF enter_loc > 0
             THEN
-               IF control_language = 1
-               THEN
-                  SELECT UTL_RAW.CONVERT(DBMS_LOB.SUBSTR(file_data
-                                                        ,  enter_loc
-                                                         - file_loc
-                                                        ,file_loc)
-                                        ,'AMERICAN_AMERICA.UTF8'
-                                        ,'AMERICAN_AMERICA.ZHT16BIG5')
-                    INTO temp_data
-                    FROM fnd_lobs
-                   WHERE 0 = 0
-                         AND file_id = fle_gfm_id;
-               ELSE
-                  SELECT DBMS_LOB.SUBSTR(file_data
-                                        ,  enter_loc
-                                         - file_loc
-                                        ,file_loc)
-                    INTO temp_data
-                    FROM fnd_lobs
-                   WHERE 0 = 0
-                         AND file_id = fle_gfm_id;
-               END IF;
+               --               IF control_language = 1
+               --               THEN
+               SELECT UTL_RAW.CONVERT(DBMS_LOB.SUBSTR(file_data
+                                                     ,  enter_loc
+                                                      - file_loc
+                                                     ,file_loc)
+                                     ,'AMERICAN_AMERICA.UTF8'
+                                     ,'AMERICAN_AMERICA.ZHT16BIG5')
+                 INTO temp_data
+                 FROM fnd_lobs
+                WHERE 0 = 0
+                      AND file_id = fle_gfm_id;
 
+               --               ELSE
+               --                  SELECT DBMS_LOB.SUBSTR(file_data
+               --                                        ,  enter_loc
+               --                                         - file_loc
+               --                                        ,file_loc)
+               --                    INTO temp_data
+               --                    FROM fnd_lobs
+               --                   WHERE 0 = 0
+               --                         AND file_id = fle_gfm_id;
+               --               END IF;
 
                -- temp_data := LTRIM(RTRIM(UTL_RAW.cast_to_varchar2(temp_data)));
-
 
                file_loc :=   enter_loc
                            + 1;
             --               enter_loc :=   enter_loc
             --                            + 2;
             ELSE
-               IF control_language = 1
-               THEN
-                  SELECT UTL_RAW.CONVERT(DBMS_LOB.SUBSTR(file_data
-                                                        ,1000
-                                                        ,file_loc)
-                                        ,'AMERICAN_AMERICA.UTF8'
-                                        ,'AMERICAN_AMERICA.ZHT16BIG5')
-                    INTO temp_data
-                    FROM fnd_lobs
-                   WHERE 0 = 0
-                         AND file_id = fle_gfm_id;
-               ELSE
-                  SELECT DBMS_LOB.SUBSTR(file_data
-                                        ,1000
-                                        ,file_loc)
-                    INTO temp_data
-                    FROM fnd_lobs
-                   WHERE 0 = 0
-                         AND file_id = fle_gfm_id;
-               END IF;
+               --               IF control_language = 1
+               --               THEN
+               SELECT UTL_RAW.CONVERT(DBMS_LOB.SUBSTR(file_data
+                                                     ,1000
+                                                     ,file_loc)
+                                     ,'AMERICAN_AMERICA.UTF8'
+                                     ,'AMERICAN_AMERICA.ZHT16BIG5')
+                 INTO temp_data
+                 FROM fnd_lobs
+                WHERE 0 = 0
+                      AND file_id = fle_gfm_id;
+
+               --               ELSE
+               --                  SELECT DBMS_LOB.SUBSTR(file_data
+               --                                        ,1000
+               --                                        ,file_loc)
+               --                    INTO temp_data
+               --                    FROM fnd_lobs
+               --                   WHERE 0 = 0
+               --                         AND file_id = fle_gfm_id;
+               --               END IF;
 
 
                file_loc :=   file_len
                            + 1;
             END IF;
-
 
             temp_data := LTRIM(RTRIM(UTL_RAW.cast_to_varchar2(temp_data)));
 
@@ -356,7 +352,7 @@ IS
                               + 1;
                temp_tab := REGEXP_REPLACE(temp_tab
                                          ,'^[[:space:]]+|[[:space:]]+$'
-                                         ,'');--去掉各種空白
+                                         ,''); --去掉各種空白
                COPY(temp_tab
                    ,p_block
                     || '.'
