@@ -74,7 +74,7 @@ IS
    PROCEDURE load_excel(p_block         VARCHAR2 --要匯入的畫面區塊
                        ,p_field         VARCHAR2 --要匯入的畫面欄位名
                        ,p_col_separate  VARCHAR2 --chr()--空字串為Null--分行符號
-                       ,p_row_separate  VARCHAR2 --chr()--空字串為Null--分欄符號
+                       ,p_row_separate  VARCHAR2 --chr()--空字串為Null--分列符號
                        ,p_begin_row     NUMBER DEFAULT 1 --讀取的起始列
                        ,p_begin_column  NUMBER DEFAULT 1 --讀取的起始行
                                                         )
