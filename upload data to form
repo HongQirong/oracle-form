@@ -1,3 +1,2295 @@
+CREATE OR REPLACE PACKAGE APPS.XX_PUB_DATA_UPLOAD_PKG
+AS
+   G_DEBUG_LEVEL   NUMBER := 0;
+   G_DEBUG_TYPE    VARCHAR2 (20);   
+  
+   g_rec XX_PUB_DATA_UPLOAD_TMP%rowtype;
+   g_rec_empty XX_PUB_DATA_UPLOAD_TMP%rowtype;      
+
+   PROCEDURE LOG (P_MSG IN VARCHAR2);
+
+   PROCEDURE OUTPUT (P_MSG IN VARCHAR2);
+
+   FUNCTION DEBUG_ENABLE (P_DEBUG_LEVEL IN NUMBER)
+      RETURN BOOLEAN;
+
+   PROCEDURE DEBUGLOG (P_MSG IN VARCHAR2);
+
+   FUNCTION CONVERT_FILE_BLOB (P_FILEDIR    IN VARCHAR2 --文件路徑 /usr/usr/glmr/customer
+                                                       ,
+                               P_FILENAME   IN VARCHAR2                ---文件名稱
+                                                       ,
+                               P_RAISE      IN NUMBER DEFAULT 1)
+      RETURN BLOB;
+
+   PROCEDURE CONVER_EXCEL_TO_TAB (P_DOCUMENT      BLOB,
+                                 P_SHEETS     IN VARCHAR2 DEFAULT NULL,
+                                 P_RAISE      IN NUMBER DEFAULT 1);
+END;
+/
+CREATE OR REPLACE PACKAGE BODY APPS.XX_PUB_DATA_UPLOAD_PKG
+AS
+   --===============================================================
+   -- Log
+   --===============================================================
+   PROCEDURE LOG (P_MSG IN VARCHAR2)
+   IS
+   BEGIN
+      FND_FILE.PUT_LINE (FND_FILE.LOG, P_MSG);
+   END LOG;
+
+   --===============================================================
+   -- Output
+   --===============================================================
+   PROCEDURE OUTPUT (P_MSG IN VARCHAR2)
+   IS
+   BEGIN
+      FND_FILE.PUT_LINE (FND_FILE.OUTPUT, P_MSG);
+   END OUTPUT;
+
+   ---輸入消息的級別。決定消息是否輸出
+   ---P_DEBUG_LEVEL:該消息的級別
+   ----如果G_DEBUG_LEVEL設定：0:則是失效消息輸出;1:消息級別<=1的會輸出;2:消息級別<=2的會輸出
+   FUNCTION DEBUG_ENABLE (P_DEBUG_LEVEL IN NUMBER)
+      RETURN BOOLEAN
+   IS
+   BEGIN
+      RETURN P_DEBUG_LEVEL <= G_DEBUG_LEVEL;
+   END;
+
+   PROCEDURE DEBUGLOG (P_MSG IN VARCHAR2)
+   IS
+   BEGIN
+      IF G_DEBUG_TYPE = 'DBMS_OUTPUT'
+      THEN
+         DBMS_OUTPUT.PUT_LINE (P_MSG);
+      ELSIF G_DEBUG_TYPE = 'FILE_OUTPUT'
+      THEN
+         FND_FILE.PUT_LINE (FND_FILE.OUTPUT, P_MSG);
+      ELSIF G_DEBUG_TYPE = 'REQUEST_OUTPUT'
+      THEN
+         LOG (P_MSG);
+      ELSIF G_DEBUG_TYPE = 'CONTEXT_OUTPUT'
+      THEN                                                   --醴？硐盓厥怀堤4000跺趼誹ㄐ
+         /*
+         IF LENGTHB(G_CONTEXT_OUTPUT||CHR(10)||P_MSG) <4000 THEN
+            G_CONTEXT_OUTPUT := CASE WHEN G_CONTEXT_OUTPUT IS NULL THEN P_MSG ELSE G_CONTEXT_OUTPUT||CHR(10)||P_MSG END;
+            XYG_FND_COMMON_PKG.SET_CONTEXT(G_DEBUG_TYPE,LTRIM(G_CONTEXT_OUTPUT,CHR(10)));
+         END IF;*/
+         NULL;
+      END IF;
+   END DEBUGLOG;
+
+   FUNCTION CONVERT_FILE_BLOB(
+      P_FILEDIR  IN VARCHAR2  --文件路徑 /usr/usr/glmr/customer
+     ,P_FILENAME  IN VARCHAR2  ---文件名稱
+     ,P_RAISE          IN NUMBER DEFAULT 1
+   )
+      RETURN BLOB
+   AS 
+       L_RESULT              BLOB := empty_blob();
+       L_FILEDIR             VARCHAR2(240);
+       l_files               bfile;
+       l_dest_offset        BINARY_INTEGER;
+       l_src_offset        BINARY_INTEGER;
+       L_PROCESS_PHASE       NUMBER;
+   BEGIN
+      L_PROCESS_PHASE := 0;
+      
+      SELECT DIRECTORY_NAME
+        INTO L_FILEDIR
+        FROM all_directories
+       WHERE 1=1
+         AND (UPPER(DIRECTORY_PATH) = CASE WHEN SUBSTR(P_FILEDIR,-1) = '/' THEN UPPER(SUBSTR(P_FILEDIR,1,LENGTH(P_FILEDIR)-1))
+                                      ELSE UPPER(P_FILEDIR)
+                                      END
+          OR UPPER(DIRECTORY_PATH) = UPPER(P_FILEDIR)
+          OR DIRECTORY_NAME = P_FILEDIR)
+         AND ROWNUM <=1;
+         
+      --DBMS_OUTPUT.PUT_LINE('L_FILEDIR:'||L_FILEDIR);
+      L_PROCESS_PHASE := 1;
+      
+      l_files := bfilename (L_FILEDIR,P_FILENAME);
+      dbms_lob.createtemporary(lob_loc => L_RESULT,  
+                           cache   => true,  
+                           dur     => dbms_lob.call);
+      l_dest_offset := 1;
+      l_src_offset := 1;
+      dbms_lob.open(l_files,dbms_lob.lob_readonly);
+      dbms_lob.loadblobfromfile(L_RESULT--dest_lob    IN OUT NOCOPY  BLOB,
+                              ,l_files--src_lob     IN            BFILE,
+                              ,dbms_lob.lobmaxsize--amount      IN            INTEGER,
+                              ,l_dest_offset--dest_offset IN            INTEGER := 1,
+                              ,l_src_offset--src_offset  IN            INTEGER := 1
+                               );
+      L_PROCESS_PHASE := 2;
+      dbms_lob.close(l_files);
+      
+      L_PROCESS_PHASE := 99;
+      RETURN L_RESULT;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         IF P_RAISE = 1
+         THEN
+            raise_application_error('-20001' --'ERR_DEFAULT_CODE'
+              ,SQLERRM || '轉換文件有異常錯誤,進度:'||L_PROCESS_PHASE);
+                  --DBMS_OUTPUT.PUT_LINE ('THERE ARE SOME ERROR, PLEASE CONTACT WITH MIS');
+         ELSE
+            --UTL_FILE.FCLOSE (L_FILEHANDLE);
+            RETURN empty_blob();
+           null;
+         END IF;
+   END;
+
+   ----------------------
+   ------程序主體部分----
+   ----------------------
+
+
+   PROCEDURE CONVER_EXCEL_TO_TAB (P_DOCUMENT      BLOB,
+                                 P_SHEETS     IN VARCHAR2 DEFAULT NULL,
+                                 P_RAISE      IN NUMBER DEFAULT 1) 
+   IS
+   
+
+      TYPE tp_cell IS RECORD
+      (
+         data_type    VARCHAR2 (1),
+         string_val   VARCHAR2 (32767),
+         number_val   NUMBER,
+         date_val     DATE,
+         blob_val     BLOB
+      );
+
+      TYPE tp_row IS TABLE OF tp_cell
+         INDEX BY PLS_INTEGER;
+
+      TYPE tp_rows IS TABLE OF tp_row
+         INDEX BY PLS_INTEGER;
+
+      TYPE tp_sheet IS RECORD
+      (
+         name   VARCHAR2 (2000),
+         rows   tp_rows
+      );
+
+      TYPE tp_data IS TABLE OF tp_sheet
+         INDEX BY PLS_INTEGER;
+
+      t_data              tp_data;
+      t_collection_base   VARCHAR2 (32767);
+      t_collection_name   VARCHAR2 (32767);
+      -- type tp_2col is table of vc_arr2 index by pls_integer;
+      --t2 tp_2col;
+      l_round             CHAR (1) := 'Y';
+      L_PROCESS_PHASE     NUMBER;
+
+      ---xls:
+      TYPE tp_sheet_rec IS RECORD
+      (
+         name   VARCHAR2 (32767),
+         ind    INTEGER
+      );
+
+      TYPE tp_sheets IS TABLE OF tp_sheet_rec
+         INDEX BY PLS_INTEGER;
+
+      t_sheets            tp_sheets;
+      t_sheet             tp_sheet_rec;
+
+      --xlsx:
+      TYPE tp_strings IS TABLE OF VARCHAR2 (32767)
+         INDEX BY PLS_INTEGER;
+
+      t_sheet_ids         tp_strings;
+      t_sheet_names       tp_strings;
+
+      -----------------
+      ----XLS解析器----
+      -----------------
+      FUNCTION g1 (i PLS_INTEGER, r PLS_INTEGER, c PLS_INTEGER)
+         RETURN VARCHAR2
+      IS
+         l_return   VARCHAR2 (4000);
+      BEGIN
+         IF l_round = 'Y'
+         THEN
+            l_return :=
+               CASE
+                  WHEN t_data (i).rows (r).EXISTS (c)
+                  THEN
+                     COALESCE (
+                        SUBSTR (t_data (i).rows (r) (c).string_val, 1, 4000),
+                        TO_CHAR (
+                           ROUND (
+                              t_data (i).rows (r) (c).number_val,
+                                14
+                              - SUBSTR (
+                                   TO_CHAR (
+                                      t_data (i).rows (r) (c).number_val,
+                                      'TME'),
+                                   -3)),
+                           'TM9'),
+                        TO_CHAR (t_data (i).rows (r) (c).date_val,
+                                 'yyyy-mm-dd hh24:mi:ss'))
+               END;
+         ELSE
+            l_return :=
+               CASE
+                  WHEN t_data (i).rows (r).EXISTS (c)
+                  THEN
+                     COALESCE (
+                        SUBSTR (t_data (i).rows (r) (c).string_val, 1, 4000),
+                        TO_CHAR (t_data (i).rows (r) (c).number_val, 'TM9'),
+                        TO_CHAR (t_data (i).rows (r) (c).date_val,
+                                 'yyyy-mm-dd hh24:mi:ss'))
+               END;
+         END IF;
+
+         RETURN l_return;
+      --return case when t_data(i)(r).exists(c) then substr( t_data(i)(r)(c), 1, 4000 ) end;
+      END;
+
+      FUNCTION parse_xls (p_document    BLOB,
+                          p_sheets      VARCHAR2 := NULL,
+                          p_extra       dbmsoutput_linesarray := NULL)
+         RETURN tp_data
+      IS
+         t_cell       tp_cell;
+         t_rows       tp_rows;
+         t_data       tp_data;
+         t_workbook   BLOB;
+         t_ind        INTEGER;
+         t_sind       INTEGER;
+         t_len        INTEGER;
+         t_max_len    INTEGER;
+         t_cnt        INTEGER;
+         t_grbit      RAW (1);
+         t_biff5      BOOLEAN;
+         t_str        VARCHAR2 (32767);
+         t_tmp        RAW (32767);
+         t_rec        RAW (32767);
+         t_date1904   BOOLEAN;
+
+         TYPE tp_sst IS TABLE OF VARCHAR2 (32767)
+            INDEX BY PLS_INTEGER;
+
+         t_sst        tp_sst;
+
+         TYPE tp_date IS TABLE OF BOOLEAN
+            INDEX BY PLS_INTEGER;
+
+         t_xf_date    tp_date;
+         t_fmt_date   tp_date;
+
+         TYPE tp_xf_fmt IS TABLE OF PLS_INTEGER
+            INDEX BY PLS_INTEGER;
+
+         t_xf_fmt     tp_xf_fmt;
+         t_fmt        VARCHAR2 (32767);
+         t_char_set   VARCHAR2 (100) := 'WE8MSWIN1252';
+         t_c          PLS_INTEGER;
+         t_type       VARCHAR2 (1);
+         t_max_c      PLS_INTEGER;
+
+         PROCEDURE read_unicode_string
+         IS
+            t_uni   RAW (32767);
+         BEGIN
+            t_str := NULL;
+
+            WHILE t_cnt > 0
+            LOOP
+               IF UTL_RAW.bit_and (t_grbit, HEXTORAW ('01')) =
+                     HEXTORAW ('01')
+               THEN
+                  IF (    t_sind + t_cnt * 2 > UTL_RAW.LENGTH (t_rec) + 1
+                      AND DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + t_len + 4) =
+                             HEXTORAW ('3C00'))
+                  THEN
+                     t_str :=
+                           t_str
+                        || UTL_I18N.raw_to_char (
+                              UTL_RAW.SUBSTR (t_rec, t_sind),
+                              'AL16UTF16LE');
+                     t_cnt :=
+                          t_cnt
+                        - UTL_RAW.LENGTH (UTL_RAW.SUBSTR (t_rec, t_sind)) / 2;
+                     t_ind := t_ind + t_len + 4;
+                     t_len :=
+                        UTL_RAW.cast_to_binary_integer (
+                           DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 2),
+                           UTL_RAW.little_endian);
+                     t_grbit := DBMS_LOB.SUBSTR (t_workbook, 1, t_ind + 4);
+                     t_rec :=
+                        DBMS_LOB.SUBSTR (t_workbook,
+                                         t_len - 1,
+                                         t_ind + 4 + 1);
+                     t_sind := 1;
+                  ELSE
+                     t_str :=
+                           t_str
+                        || UTL_I18N.raw_to_char (
+                              UTL_RAW.SUBSTR (t_rec, t_sind, t_cnt * 2),
+                              'AL16UTF16LE');
+                     t_sind := t_sind + t_cnt * 2;
+                     t_cnt := 0;
+                  END IF;
+               ELSE
+                  IF (    t_sind + t_cnt > UTL_RAW.LENGTH (t_rec) + 1
+                      AND DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + t_len + 4) =
+                             HEXTORAW ('3C00'))
+                  THEN
+                     t_tmp := UTL_RAW.SUBSTR (t_rec, t_sind);
+                     t_cnt :=
+                          t_cnt
+                        - UTL_RAW.LENGTH (UTL_RAW.SUBSTR (t_rec, t_sind));
+                     t_ind := t_ind + t_len + 4;
+                     t_len :=
+                        UTL_RAW.cast_to_binary_integer (
+                           DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 2),
+                           UTL_RAW.little_endian);
+                     t_grbit := DBMS_LOB.SUBSTR (t_workbook, 1, t_ind + 4);
+                     t_rec :=
+                        DBMS_LOB.SUBSTR (t_workbook,
+                                         t_len - 1,
+                                         t_ind + 4 + 1);
+                     t_sind := 1;
+                  ELSE
+                     t_tmp := UTL_RAW.SUBSTR (t_rec, t_sind, t_cnt);
+                     t_sind := t_sind + t_cnt;
+                     t_cnt := 0;
+                  END IF;
+
+                  t_uni := NULL;
+
+                  FOR i IN 1 .. UTL_RAW.LENGTH (t_tmp)
+                  LOOP
+                     t_uni :=
+                        UTL_RAW.CONCAT (t_uni,
+                                        UTL_RAW.SUBSTR (t_tmp, i, 1),
+                                        HEXTORAW ('00'));
+                  END LOOP;
+
+                  t_str :=
+                     t_str || UTL_I18N.raw_to_char (t_uni, 'AL16UTF16LE');
+               END IF;
+            END LOOP;
+         END;
+
+         FUNCTION rk2number (p_rk RAW)
+            RETURN NUMBER
+         IS
+         BEGIN
+            RETURN CASE RAWTOHEX (
+                           UTL_RAW.bit_and (UTL_RAW.SUBSTR (p_rk, 1, 1),
+                                            '03'))
+                      WHEN '02'
+                      THEN
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.bit_and (p_rk, 'FCFFFFFF'),
+                              UTL_RAW.little_endian)
+                         / 4
+                      WHEN '03'
+                      THEN
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.bit_and (p_rk, 'FCFFFFFF'),
+                              UTL_RAW.little_endian)
+                         / 400
+                      WHEN '00'
+                      THEN
+                         UTL_RAW.cast_to_binary_double (
+                            UTL_RAW.CONCAT ('00000000', p_rk),
+                            UTL_RAW.little_endian)
+                      WHEN '01'
+                      THEN
+                           UTL_RAW.cast_to_binary_double (
+                              UTL_RAW.CONCAT (
+                                 '00000000',
+                                 UTL_RAW.bit_and (p_rk, 'FCFFFFFF')),
+                              UTL_RAW.little_endian)
+                         / 100
+                   END;
+         END;
+
+         FUNCTION num2date (p_num NUMBER)
+            RETURN DATE
+         IS
+         BEGIN
+            IF t_date1904
+            THEN
+               RETURN TO_DATE ('01-01-1904', 'DD-MM-YYYY') + p_num;
+            END IF;
+
+            RETURN TO_DATE ('01-03-1900', 'DD-MM-YYYY') + (p_num - 61);
+         END;
+
+         PROCEDURE read_cfb (p_cf BLOB)
+         IS
+            t_header                        RAW (512);
+            t_byte_order                    PLS_INTEGER;
+            t_encoding                      VARCHAR2 (30);
+            t_ssz                           PLS_INTEGER;
+            t_sssz                          PLS_INTEGER;
+            t_sectId                        PLS_INTEGER;
+            t_tmp_sectId                    t_sectId%TYPE;
+
+            TYPE tp_secids IS TABLE OF t_sectId%TYPE
+               INDEX BY PLS_INTEGER;
+
+            t_msat                          tp_secids;
+            t_sat                           tp_secids;
+            t_ssat                          tp_secids;
+            t_sector                        RAW (2048);
+            t_short_container               BLOB;
+            t_stream                        BLOB;
+            t_len                           PLS_INTEGER;
+            t_name                          VARCHAR2 (32 CHAR);
+            c_Free_SecID           CONSTANT PLS_INTEGER := -1;
+            c_End_Of_Chain_SecID   CONSTANT PLS_INTEGER := -2;
+            c_SAT_SecID            CONSTANT PLS_INTEGER := -3;
+            c_MSAT_SecID           CONSTANT PLS_INTEGER := -4;
+            c_DIR_Empty            CONSTANT RAW (1) := HEXTORAW ('00');
+            c_DIR_Storage          CONSTANT RAW (1) := HEXTORAW ('01');
+            c_DIR_Stream           CONSTANT RAW (1) := HEXTORAW ('02');
+            c_DIR_Lock             CONSTANT RAW (1) := HEXTORAW ('03');
+            c_DIR_Property         CONSTANT RAW (1) := HEXTORAW ('04');
+            c_DIR_Root             CONSTANT RAW (1) := HEXTORAW ('05');
+         BEGIN
+            t_header := DBMS_LOB.SUBSTR (p_cf, 512, 1);
+
+            IF (   t_header IS NULL
+                OR UTL_RAW.LENGTH (t_header) < 512
+                OR UTL_RAW.SUBSTR (t_header, 1, 8) !=
+                      HEXTORAW ('D0CF11E0A1B11AE1'))
+            THEN
+               RETURN;
+            END IF;
+
+            t_byte_order :=
+               CASE
+                  WHEN UTL_RAW.SUBSTR (t_header, 29, 2) = HEXTORAW ('FEFF')
+                  THEN
+                     UTL_RAW.little_endian
+                  ELSE
+                     UTL_RAW.big_endian
+               END;
+
+            IF t_byte_order = UTL_RAW.little_endian
+            THEN
+               t_encoding := 'AL16UTF16LE';
+            ELSE
+               t_encoding := 'AL16UTF16';
+            END IF;
+
+            t_ssz :=
+               POWER (
+                  2,
+                  UTL_RAW.cast_to_binary_integer (
+                     UTL_RAW.SUBSTR (t_header, 31, 2),
+                     t_byte_order));
+            t_sssz :=
+               POWER (
+                  2,
+                  UTL_RAW.cast_to_binary_integer (
+                     UTL_RAW.SUBSTR (t_header, 33, 2),
+                     t_byte_order));
+
+            FOR i IN 0 .. 109 - 1
+            LOOP
+               t_sectId :=
+                  UTL_RAW.cast_to_binary_integer (
+                     UTL_RAW.SUBSTR (t_header, 77 + i * 4, 4),
+                     t_byte_order);
+               EXIT WHEN t_sectId = c_Free_SecID;
+               t_msat (i) := t_sectId;
+            END LOOP;
+
+            t_sectId :=
+               UTL_RAW.cast_to_binary_integer (
+                  UTL_RAW.SUBSTR (t_header, 69, 4),
+                  t_byte_order);
+
+            WHILE t_sectId != c_End_Of_Chain_SecID
+            LOOP
+               t_sector :=
+                  DBMS_LOB.SUBSTR (p_cf, t_ssz, 512 + t_ssz * t_sectId + 1);
+
+               FOR i IN 0 .. t_ssz / 4 - 2
+               LOOP
+                  t_msat (t_msat.COUNT ()) :=
+                     UTL_RAW.cast_to_binary_integer (
+                        UTL_RAW.SUBSTR (t_sector, i * 4 + 1, 4),
+                        t_byte_order);
+               END LOOP;
+
+               t_sectId :=
+                  UTL_RAW.cast_to_binary_integer (
+                     UTL_RAW.SUBSTR (t_sector, -4, 4),
+                     t_byte_order);
+            END LOOP;
+
+            FOR j IN 0 .. t_msat.COUNT () - 1
+            LOOP
+               t_sector :=
+                  DBMS_LOB.SUBSTR (p_cf, t_ssz, 512 + t_ssz * t_msat (j) + 1);
+
+               FOR i IN 0 .. t_ssz / 4 - 1
+               LOOP
+                  t_sat (t_sat.COUNT ()) :=
+                     UTL_RAW.cast_to_binary_integer (
+                        UTL_RAW.SUBSTR (t_sector, i * 4 + 1, 4),
+                        t_byte_order);
+               END LOOP;
+            END LOOP;
+
+            t_sectId :=
+               UTL_RAW.cast_to_binary_integer (
+                  UTL_RAW.SUBSTR (t_header, 61, 4),
+                  t_byte_order);
+
+            WHILE t_sectId != c_End_Of_Chain_SecID
+            LOOP
+               t_sector :=
+                  DBMS_LOB.SUBSTR (p_cf, t_ssz, 512 + t_ssz * t_sectId + 1);
+
+               FOR i IN 0 .. t_ssz / 4 - 1
+               LOOP
+                  t_ssat (t_ssat.COUNT ()) :=
+                     UTL_RAW.cast_to_binary_integer (
+                        UTL_RAW.SUBSTR (t_sector, i * 4 + 1, 4),
+                        t_byte_order);
+               END LOOP;
+
+               t_sectId := t_sat (t_sectId);
+            END LOOP;
+
+            t_sectId :=
+               UTL_RAW.cast_to_binary_integer (
+                  UTL_RAW.SUBSTR (t_header, 49, 4),
+                  t_byte_order);
+
+            WHILE t_sectId != c_End_Of_Chain_SecID
+            LOOP
+               t_sector :=
+                  DBMS_LOB.SUBSTR (p_cf, t_ssz, 512 + t_ssz * t_sectId + 1);
+
+               FOR i IN 0 .. t_ssz / 128 - 1
+               LOOP
+                  t_len :=
+                     UTL_RAW.cast_to_binary_integer (
+                        UTL_RAW.SUBSTR (t_sector, i * 128 + 65, 2),
+                        t_byte_order);
+
+                  IF t_len > 2
+                  THEN
+                     t_name :=
+                        UTL_I18N.raw_to_char (
+                           UTL_RAW.SUBSTR (t_sector, i * 128 + 1, t_len - 2),
+                           t_encoding);
+                  END IF;
+
+                  CASE UTL_RAW.SUBSTR (t_sector, i * 128 + 67, 1)
+                     WHEN c_DIR_Stream
+                     THEN
+                        DBMS_LOB.createtemporary (t_stream, TRUE);
+                        t_tmp_sectId :=
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_sector, i * 128 + 117, 4),
+                              t_byte_order);
+                        t_len :=
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_sector, i * 128 + 121, 4),
+                              t_byte_order);
+
+                        IF t_len >=
+                              UTL_RAW.cast_to_binary_integer (
+                                 UTL_RAW.SUBSTR (t_header, 57, 4),
+                                 t_byte_order)
+                        THEN
+                           WHILE t_tmp_sectId != c_End_Of_Chain_SecID
+                           LOOP
+                              DBMS_LOB.append (
+                                 t_stream,
+                                 DBMS_LOB.SUBSTR (
+                                    p_cf,
+                                    t_ssz,
+                                    512 + t_ssz * t_tmp_sectId + 1));
+                              t_tmp_sectId := t_sat (t_tmp_sectId);
+                           END LOOP;
+                        ELSE
+                           WHILE t_tmp_sectId != c_End_Of_Chain_SecID
+                           LOOP
+                              DBMS_LOB.append (
+                                 t_stream,
+                                 DBMS_LOB.SUBSTR (t_short_container,
+                                                  t_sssz,
+                                                  t_sssz * t_tmp_sectId + 1));
+                              t_tmp_sectId := t_ssat (t_tmp_sectId);
+                           END LOOP;
+                        END IF;
+
+                        DBMS_LOB.TRIM (t_stream, t_len);
+
+                        IF t_name = 'Workbook'
+                        THEN
+                           t_workbook := t_stream;
+                        END IF;
+
+                        IF t_name = 'Book'
+                        THEN
+                           t_workbook := t_stream;
+                        END IF;
+                     WHEN c_DIR_Root
+                     THEN
+                        DBMS_LOB.createtemporary (t_short_container, TRUE);
+                        t_tmp_sectId :=
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_sector, i * 128 + 117, 4),
+                              t_byte_order);
+
+                        WHILE t_tmp_sectId != c_End_Of_Chain_SecID
+                        LOOP
+                           DBMS_LOB.append (
+                              t_short_container,
+                              DBMS_LOB.SUBSTR (
+                                 p_cf,
+                                 t_ssz,
+                                 512 + t_ssz * t_tmp_sectId + 1));
+                           t_tmp_sectId := t_sat (t_tmp_sectId);
+                        END LOOP;
+                     ELSE
+                        NULL;
+                  END CASE;
+               END LOOP;
+
+               t_sectId := t_sat (t_sectId);
+            END LOOP;
+
+            IF DBMS_LOB.istemporary (t_short_container) = 1
+            THEN
+               DBMS_LOB.freetemporary (t_short_container);
+            END IF;
+
+            IF DBMS_LOB.istemporary (t_stream) = 1
+            THEN
+               DBMS_LOB.freetemporary (t_stream);
+            END IF;
+         END;
+
+      BEGIN
+         --my_log('parsing XLS');
+         --EXECUTE IMMEDIATE 'ALTER SESSION ENABLE PARALLEL DML';
+         
+         read_cfb (p_document);
+
+         IF t_workbook IS NULL OR DBMS_LOB.getlength (t_workbook) = 0
+         THEN
+            --my_log('No workbook file found');
+            raise_application_error (-20003, 'Not a valid XLS-file', TRUE);
+         END IF;
+
+         t_ind := 1;
+         t_max_len := DBMS_LOB.getlength (t_workbook);
+
+         IF (    DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) = HEXTORAW ('0908')
+             AND DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 4) IN (HEXTORAW (
+                                                                   '0005'),
+                                                                HEXTORAW (
+                                                                   '0006'))
+             AND DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 6) =
+                    HEXTORAW ('0500'))
+         THEN
+            t_biff5 :=
+               DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 4) = HEXTORAW ('0005');
+            t_len :=
+               UTL_RAW.cast_to_binary_integer (
+                  DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 2),
+                  UTL_RAW.little_endian);
+            t_ind := t_ind + t_len + 4;
+
+            LOOP
+               EXIT WHEN t_ind >= t_max_len;
+               EXIT WHEN DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                            HEXTORAW ('0A00');
+               t_len :=
+                  UTL_RAW.cast_to_binary_integer (
+                     DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 2),
+                     UTL_RAW.little_endian);
+
+               IF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) = HEXTORAW ('FC00')
+               THEN
+                  DECLARE
+                     t_run   INTEGER;
+                     t_ext   INTEGER;
+
+                     PROCEDURE add_cont (p_len PLS_INTEGER)
+                     IS
+                     BEGIN
+                        IF (    t_sind + p_len > UTL_RAW.LENGTH (t_rec) + 1
+                            AND DBMS_LOB.SUBSTR (t_workbook,
+                                                 2,
+                                                 t_ind + t_len + 4) =
+                                   HEXTORAW ('3C00'))
+                        THEN
+                           t_ind := t_ind + t_len + 4;
+                           t_len :=
+                              UTL_RAW.cast_to_binary_integer (
+                                 DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 2),
+                                 UTL_RAW.little_endian);
+
+                           IF t_sind <= UTL_RAW.LENGTH (t_rec)
+                           THEN
+                              t_rec :=
+                                 UTL_RAW.CONCAT (
+                                    UTL_RAW.SUBSTR (t_rec, t_sind),
+                                    DBMS_LOB.SUBSTR (t_workbook,
+                                                     t_len,
+                                                     t_ind + 4));
+                           ELSE
+                              t_rec :=
+                                 DBMS_LOB.SUBSTR (t_workbook,
+                                                  t_len,
+                                                  t_ind + 4);
+                           END IF;
+
+                           t_sind := 1;
+                        END IF;
+                     END;
+                  BEGIN
+                     t_sind := 1;
+                     t_rec :=
+                        DBMS_LOB.SUBSTR (t_workbook, t_len - 8, t_ind + 12);
+
+                     FOR j IN 1 ..
+                              UTL_RAW.cast_to_binary_integer (
+                                 DBMS_LOB.SUBSTR (t_workbook, 4, t_ind + 8),
+                                 UTL_RAW.little_endian)
+                     LOOP
+                        add_cont (3);
+                        t_cnt :=
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_rec, t_sind, 2),
+                              UTL_RAW.little_endian);
+                        t_sind := t_sind + 2;
+                        t_grbit := UTL_RAW.SUBSTR (t_rec, t_sind, 1);
+                        t_sind := t_sind + 1;
+
+                        IF UTL_RAW.bit_and (t_grbit, HEXTORAW ('08')) =
+                              HEXTORAW ('08')
+                        THEN
+                           add_cont (2);
+                           t_run :=
+                              UTL_RAW.cast_to_binary_integer (
+                                 UTL_RAW.SUBSTR (t_rec, t_sind, 2),
+                                 UTL_RAW.little_endian);
+                           t_sind := t_sind + 2;
+                        ELSE
+                           t_run := 0;
+                        END IF;
+
+                        IF UTL_RAW.bit_and (t_grbit, HEXTORAW ('04')) =
+                              HEXTORAW ('04')
+                        THEN
+                           add_cont (4);
+                           t_ext :=
+                              UTL_RAW.cast_to_binary_integer (
+                                 UTL_RAW.SUBSTR (t_rec, t_sind, 4),
+                                 UTL_RAW.little_endian);
+
+                           IF t_ext < 0
+                           THEN
+                              t_ext := t_ext + 4294967296;
+                           END IF;
+
+                           t_sind := t_sind + 4;
+                        ELSE
+                           t_ext := 0;
+                        END IF;
+
+                        read_unicode_string;
+                        t_sst (t_sst.COUNT ()) := t_str;
+                        add_cont (t_run * 4 + t_ext);
+                        t_sind := t_sind + t_run * 4 + t_ext;
+                     END LOOP;
+                  END;
+               ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                        HEXTORAW ('8500')
+               THEN
+                  t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                  IF t_biff5
+                  THEN
+                     t_cnt :=
+                        UTL_RAW.cast_to_binary_integer (
+                           UTL_RAW.SUBSTR (t_rec, 7, 1),
+                           UTL_RAW.little_endian);
+                     t_tmp := UTL_RAW.SUBSTR (t_rec, 8, t_cnt);
+                     t_sheet.name := UTL_I18N.raw_to_char (t_tmp, t_char_set);
+                  ELSE
+                     t_cnt :=
+                        UTL_RAW.cast_to_binary_integer (
+                           UTL_RAW.SUBSTR (t_rec, 7, 1));
+                     t_grbit := UTL_RAW.SUBSTR (t_rec, 8, 1);
+
+                     IF UTL_RAW.bit_and (t_grbit, HEXTORAW ('01')) =
+                           HEXTORAW ('01')
+                     THEN
+                        t_str := UTL_RAW.SUBSTR (t_rec, 9, t_cnt * 2);
+                     ELSE
+                        t_str := NULL;
+                        t_tmp := UTL_RAW.SUBSTR (t_rec, 9, t_cnt);
+
+                        FOR i IN 1 .. UTL_RAW.LENGTH (t_tmp)
+                        LOOP
+                           t_str :=
+                              UTL_RAW.CONCAT (t_str,
+                                              UTL_RAW.SUBSTR (t_tmp, i, 1),
+                                              HEXTORAW ('00'));
+                        END LOOP;
+                     END IF;
+
+                     t_sheet.name :=
+                        UTL_I18N.raw_to_char (t_str, 'AL16UTF16LE');
+                  END IF;
+
+                  t_sheet.ind :=
+                     UTL_RAW.cast_to_binary_integer (
+                        UTL_RAW.SUBSTR (t_rec, 1, 4),
+                        UTL_RAW.little_endian);
+                  t_sheets (t_sheets.COUNT ()) := t_sheet;
+               ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                        HEXTORAW ('2200')
+               THEN
+                  t_date1904 :=
+                     DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 4) =
+                        HEXTORAW ('0100');
+               ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                        HEXTORAW ('1E04')
+               THEN
+                  t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                  IF t_biff5
+                  THEN
+                     t_cnt :=
+                        UTL_RAW.cast_to_binary_integer (
+                           UTL_RAW.SUBSTR (t_rec, 3, 1),
+                           UTL_RAW.little_endian);
+                     t_tmp := UTL_RAW.SUBSTR (t_rec, 4, t_cnt);
+                     t_fmt := UTL_I18N.raw_to_char (t_tmp, t_char_set);
+                  ELSE
+                     t_cnt :=
+                        UTL_RAW.cast_to_binary_integer (
+                           UTL_RAW.SUBSTR (t_rec, 3, 2),
+                           UTL_RAW.little_endian);
+                     t_grbit := UTL_RAW.SUBSTR (t_rec, 5, 1);
+
+                     IF UTL_RAW.bit_and (t_grbit, HEXTORAW ('01')) =
+                           HEXTORAW ('01')
+                     THEN
+                        t_str := UTL_RAW.SUBSTR (t_rec, 6, t_cnt * 2);
+                     ELSE
+                        t_str := NULL;
+                        t_tmp := UTL_RAW.SUBSTR (t_rec, 6, t_cnt);
+
+                        FOR i IN 1 .. UTL_RAW.LENGTH (t_tmp)
+                        LOOP
+                           t_str :=
+                              UTL_RAW.CONCAT (t_str,
+                                              UTL_RAW.SUBSTR (t_tmp, i, 1),
+                                              HEXTORAW ('00'));
+                        END LOOP;
+                     END IF;
+
+                     t_fmt := UTL_I18N.raw_to_char (t_str, 'AL16UTF16LE');
+                  END IF;
+
+                  t_fmt_date (
+                     UTL_RAW.cast_to_binary_integer (
+                        UTL_RAW.SUBSTR (t_rec, 1, 2),
+                        UTL_RAW.little_endian)) :=
+                     (   INSTR (t_fmt, 'dd') > 0
+                      OR INSTR (t_fmt, 'mm') > 0
+                      OR INSTR (t_fmt, 'yy') > 0);
+               ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                        HEXTORAW ('E000')
+               THEN
+                  t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+                  t_xf_fmt (t_xf_fmt.COUNT ()) :=
+                     UTL_RAW.cast_to_binary_integer (
+                        UTL_RAW.SUBSTR (t_rec, 3, 2),
+                        UTL_RAW.little_endian);
+               ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                        HEXTORAW ('4200')
+               THEN
+                  t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                  IF (    RAWTOHEX (t_rec) IN ('1027', '0080')
+                      AND NLS_CHARSET_ID ('WE8MACROMAN8') IS NOT NULL)
+                  THEN
+                     t_char_set := 'WE8MACROMAN8';
+                  END IF;
+               END IF;
+
+               t_ind := t_ind + t_len + 4;
+            END LOOP;
+
+            t_fmt_date (14) := TRUE;
+            t_fmt_date (15) := TRUE;
+            t_fmt_date (16) := TRUE;
+            t_fmt_date (17) := TRUE;
+            t_fmt_date (22) := TRUE;
+
+            FOR i IN 0 .. t_xf_fmt.COUNT () - 1
+            LOOP
+               t_xf_date (i) :=
+                      t_fmt_date.EXISTS (t_xf_fmt (i))
+                  AND t_fmt_date (t_xf_fmt (i));
+            END LOOP;
+         END IF;
+
+         FOR s IN 0 .. t_sheets.COUNT - 1
+         LOOP
+            t_ind := t_sheets (s).ind + 1;
+
+            IF (    DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                       HEXTORAW ('0908')
+                AND DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 4) =
+                       HEXTORAW ('0006')
+                AND DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 6) =
+                       HEXTORAW ('1000')
+                AND (   p_sheets IS NULL
+                     OR INSTR (':' || p_sheets || ':',
+                               ':' || TO_CHAR (s + 1) || ':') > 0
+                     OR INSTR (':' || p_sheets || ':',
+                               ':' || t_sheets (s).name || ':') > 0))
+            THEN
+               t_max_c := 0;
+               t_rows.delete;
+               t_data (t_data.COUNT + 1).name := t_sheets (s).name;
+               --my_log('read ' || t_sheets(s).name);
+               t_len :=
+                  UTL_RAW.cast_to_binary_integer (
+                     DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 2),
+                     UTL_RAW.little_endian);
+               t_ind := t_ind + t_len + 4;
+
+               LOOP
+                  EXIT WHEN t_ind >= t_max_len;
+                  EXIT WHEN DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                               HEXTORAW ('0A00');
+                  t_cell := NULL;
+                  t_len :=
+                     UTL_RAW.cast_to_binary_integer (
+                        DBMS_LOB.SUBSTR (t_workbook, 2, t_ind + 2),
+                        UTL_RAW.little_endian);
+
+                  IF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                        HEXTORAW ('7E02')
+                  THEN
+                     t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                     IF t_xf_date (
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_rec, 5, 2),
+                              UTL_RAW.little_endian))
+                     THEN
+                        t_cell.data_type := 'D';
+                        t_cell.date_val :=
+                           num2date (
+                              rk2number (UTL_RAW.SUBSTR (t_rec, 7, 4)));
+                     ELSE
+                        t_cell.data_type := 'N';
+                        t_cell.number_val :=
+                           rk2number (UTL_RAW.SUBSTR (t_rec, 7, 4));
+                     END IF;
+
+                     t_c :=
+                          UTL_RAW.cast_to_binary_integer (
+                             UTL_RAW.SUBSTR (t_rec, 3, 2),
+                             UTL_RAW.little_endian)
+                        + 1;
+                     t_max_c := GREATEST (t_max_c, t_c);
+                     t_rows (
+                          UTL_RAW.cast_to_binary_integer (
+                             UTL_RAW.SUBSTR (t_rec, 1, 2),
+                             UTL_RAW.little_endian)
+                        + 1) (t_c) :=
+                        t_cell;
+                  ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                           HEXTORAW ('0302')
+                  THEN
+                     t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                     IF t_xf_date (
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_rec, 5, 2),
+                              UTL_RAW.little_endian))
+                     THEN
+                        t_cell.data_type := 'D';
+                        t_cell.date_val :=
+                           num2date (
+                              UTL_RAW.cast_to_binary_double (
+                                 UTL_RAW.SUBSTR (t_rec, 7, 8),
+                                 UTL_RAW.little_endian));
+                     ELSE
+                        t_cell.data_type := 'N';
+                        t_cell.number_val :=
+                           UTL_RAW.cast_to_binary_double (
+                              UTL_RAW.SUBSTR (t_rec, 7, 8),
+                              UTL_RAW.little_endian);
+                     END IF;
+
+                     t_c :=
+                          UTL_RAW.cast_to_binary_integer (
+                             UTL_RAW.SUBSTR (t_rec, 3, 2),
+                             UTL_RAW.little_endian)
+                        + 1;
+                     t_max_c := GREATEST (t_max_c, t_c);
+                     t_rows (
+                          UTL_RAW.cast_to_binary_integer (
+                             UTL_RAW.SUBSTR (t_rec, 1, 2),
+                             UTL_RAW.little_endian)
+                        + 1) (t_c) :=
+                        t_cell;
+                  ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                           HEXTORAW ('0600')
+                  THEN
+                     t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                     IF (   RAWTOHEX (UTL_RAW.SUBSTR (t_rec, 7, 1)) NOT IN ('00',
+                                                                            '01',
+                                                                            '02',
+                                                                            '03')
+                         OR UTL_RAW.SUBSTR (t_rec, 13, 2) !=
+                               HEXTORAW ('FFFF'))
+                     THEN
+                        IF t_xf_date (
+                              UTL_RAW.cast_to_binary_integer (
+                                 UTL_RAW.SUBSTR (t_rec, 5, 2),
+                                 UTL_RAW.little_endian))
+                        THEN
+                           t_cell.data_type := 'D';
+                           t_cell.date_val :=
+                              num2date (
+                                 UTL_RAW.cast_to_binary_double (
+                                    UTL_RAW.SUBSTR (t_rec, 7, 8),
+                                    UTL_RAW.little_endian));
+                        ELSE
+                           t_cell.data_type := 'N';
+                           t_cell.number_val :=
+                              UTL_RAW.cast_to_binary_double (
+                                 UTL_RAW.SUBSTR (t_rec, 7, 8),
+                                 UTL_RAW.little_endian);
+                        END IF;
+
+                        t_c :=
+                             UTL_RAW.cast_to_binary_integer (
+                                UTL_RAW.SUBSTR (t_rec, 3, 2),
+                                UTL_RAW.little_endian)
+                           + 1;
+                        t_max_c := GREATEST (t_max_c, t_c);
+                        t_rows (
+                             UTL_RAW.cast_to_binary_integer (
+                                UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                UTL_RAW.little_endian)
+                           + 1) (t_c) :=
+                           t_cell;
+                     ELSE
+                        CASE RAWTOHEX (UTL_RAW.SUBSTR (t_rec, 7, 1))
+                           WHEN '01'
+                           THEN
+                              t_cell.data_type := 'S';
+                              t_cell.string_val :=
+                                 CASE RAWTOHEX (UTL_RAW.SUBSTR (t_rec, 9, 1))
+                                    WHEN '00' THEN 'FALSE'
+                                    WHEN '01' THEN 'TRUE'
+                                 END;
+                              t_c :=
+                                   UTL_RAW.cast_to_binary_integer (
+                                      UTL_RAW.SUBSTR (t_rec, 3, 2),
+                                      UTL_RAW.little_endian)
+                                 + 1;
+                              t_max_c := GREATEST (t_max_c, t_c);
+                              t_rows (
+                                   UTL_RAW.cast_to_binary_integer (
+                                      UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                      UTL_RAW.little_endian)
+                                 + 1) (t_c) :=
+                                 t_cell;
+                           WHEN '02'
+                           THEN
+                              NULL;
+                           WHEN '00'
+                           THEN
+                              IF DBMS_LOB.SUBSTR (t_workbook,
+                                                  2,
+                                                  t_ind + t_len + 4) =
+                                    HEXTORAW ('0702')
+                              THEN
+                                 DECLARE
+                                    t_row   PLS_INTEGER
+                                       :=   UTL_RAW.cast_to_binary_integer (
+                                               UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                               UTL_RAW.little_endian)
+                                          + 1;
+                                    t_col   PLS_INTEGER
+                                       :=   UTL_RAW.cast_to_binary_integer (
+                                               UTL_RAW.SUBSTR (t_rec, 3, 2),
+                                               UTL_RAW.little_endian)
+                                          + 1;
+                                 BEGIN
+                                    t_ind := t_ind + t_len + 4;
+                                    t_len :=
+                                       UTL_RAW.cast_to_binary_integer (
+                                          DBMS_LOB.SUBSTR (t_workbook,
+                                                           2,
+                                                           t_ind + 2),
+                                          UTL_RAW.little_endian);
+                                    t_rec :=
+                                       DBMS_LOB.SUBSTR (t_workbook,
+                                                        t_len,
+                                                        t_ind + 4);
+                                    t_cnt :=
+                                       UTL_RAW.cast_to_binary_integer (
+                                          UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                          UTL_RAW.little_endian);
+                                    t_sind := 4;
+                                    t_cell.data_type := 'S';
+
+                                    IF t_biff5
+                                    THEN
+                                       t_tmp :=
+                                          UTL_RAW.SUBSTR (t_rec, 3, t_cnt);
+                                       t_cell.string_val :=
+                                          UTL_I18N.raw_to_char (t_tmp,
+                                                                t_char_set);
+                                    ELSE
+                                       t_grbit :=
+                                          DBMS_LOB.SUBSTR (t_rec, 1, 3);
+                                       read_unicode_string;
+                                       t_cell.string_val := t_str;
+                                    END IF;
+
+                                    t_max_c := GREATEST (t_max_c, t_col);
+                                    t_rows (t_row) (t_col) := t_cell;
+                                 END;
+                              END IF;
+                           ELSE
+                              t_cell.data_type := 'S';
+                              t_cell.string_val := '';
+                              t_c :=
+                                   UTL_RAW.cast_to_binary_integer (
+                                      UTL_RAW.SUBSTR (t_rec, 3, 2),
+                                      UTL_RAW.little_endian)
+                                 + 1;
+                              t_max_c := GREATEST (t_max_c, t_c);
+                              t_rows (
+                                   UTL_RAW.cast_to_binary_integer (
+                                      UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                      UTL_RAW.little_endian)
+                                 + 1) (t_c) :=
+                                 t_cell;
+                        END CASE;
+                     END IF;
+                  ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                           HEXTORAW ('0402')
+                  THEN
+                     t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                     IF t_biff5
+                     THEN
+                        t_cell.data_type := 'S';
+                        t_cnt :=
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_rec, 7, 2),
+                              UTL_RAW.little_endian);
+
+                        IF t_cnt = 0
+                        THEN
+                           t_cell.string_val := NULL;
+                        ELSE
+                           t_tmp := UTL_RAW.SUBSTR (t_rec, 9, t_cnt);
+                           t_cell.string_val :=
+                              UTL_I18N.raw_to_char (t_tmp, t_char_set);
+                        END IF;
+
+                        t_c :=
+                             UTL_RAW.cast_to_binary_integer (
+                                UTL_RAW.SUBSTR (t_rec, 3, 2),
+                                UTL_RAW.little_endian)
+                           + 1;
+                        t_max_c := GREATEST (t_max_c, t_c);
+                        t_rows (
+                             UTL_RAW.cast_to_binary_integer (
+                                UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                UTL_RAW.little_endian)
+                           + 1) (t_c) :=
+                           t_cell;
+                     END IF;
+                  ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                           HEXTORAW ('D600')
+                  THEN
+                     t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+
+                     IF t_biff5
+                     THEN
+                        t_cnt :=
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_rec, 7, 2),
+                              UTL_RAW.little_endian);
+                        t_tmp := UTL_RAW.SUBSTR (t_rec, 9, t_cnt);
+                        t_cell.data_type := 'S';
+                        t_cell.string_val :=
+                           UTL_I18N.raw_to_char (t_tmp, t_char_set);
+                        t_c :=
+                             UTL_RAW.cast_to_binary_integer (
+                                UTL_RAW.SUBSTR (t_rec, 3, 2),
+                                UTL_RAW.little_endian)
+                           + 1;
+                        t_max_c := GREATEST (t_max_c, t_c);
+                        t_rows (
+                             UTL_RAW.cast_to_binary_integer (
+                                UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                UTL_RAW.little_endian)
+                           + 1) (t_c) :=
+                           t_cell;
+                     END IF;
+                  ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                           HEXTORAW ('FD00')
+                  THEN
+                     t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+                     t_cell.data_type := 'S';
+                     t_c :=
+                          UTL_RAW.cast_to_binary_integer (
+                             UTL_RAW.SUBSTR (t_rec, 3, 2),
+                             UTL_RAW.little_endian)
+                        + 1;
+                     t_max_c := GREATEST (t_max_c, t_c);
+                     t_cell.string_val :=
+                        t_sst (
+                           UTL_RAW.cast_to_binary_integer (
+                              UTL_RAW.SUBSTR (t_rec, 7, 4),
+                              UTL_RAW.little_endian));
+                     t_rows (
+                          UTL_RAW.cast_to_binary_integer (
+                             UTL_RAW.SUBSTR (t_rec, 1, 2),
+                             UTL_RAW.little_endian)
+                        + 1) (t_c) :=
+                        t_cell;
+                  ELSIF DBMS_LOB.SUBSTR (t_workbook, 2, t_ind) =
+                           HEXTORAW ('BD00')
+                  THEN
+                     t_rec := DBMS_LOB.SUBSTR (t_workbook, t_len, t_ind + 4);
+                     t_cnt :=
+                        UTL_RAW.cast_to_binary_integer (
+                           UTL_RAW.SUBSTR (t_rec, 3, 2),
+                           UTL_RAW.little_endian);
+
+                     FOR i IN UTL_RAW.cast_to_binary_integer (
+                                 UTL_RAW.SUBSTR (t_rec, 3, 2),
+                                 UTL_RAW.little_endian) ..
+                              UTL_RAW.cast_to_binary_integer (
+                                 UTL_RAW.SUBSTR (t_rec, -2, 2),
+                                 UTL_RAW.little_endian)
+                     LOOP
+                        t_tmp :=
+                           UTL_RAW.SUBSTR (t_rec, 5 + 6 * (i - t_cnt), 6);
+
+                        IF t_xf_date (
+                              UTL_RAW.cast_to_binary_integer (
+                                 UTL_RAW.SUBSTR (t_tmp, 1, 2),
+                                 UTL_RAW.little_endian))
+                        THEN
+                           t_cell.data_type := 'D';
+                           t_cell.date_val :=
+                              num2date (
+                                 rk2number (UTL_RAW.SUBSTR (t_tmp, 3, 4)));
+                        ELSE
+                           t_cell.data_type := 'N';
+                           t_cell.number_val :=
+                              rk2number (UTL_RAW.SUBSTR (t_tmp, 3, 4));
+                        END IF;
+
+                        t_max_c := GREATEST (t_max_c, i + 1);
+                        t_rows (
+                             UTL_RAW.cast_to_binary_integer (
+                                UTL_RAW.SUBSTR (t_rec, 1, 2),
+                                UTL_RAW.little_endian)
+                           + 1) (i + 1) :=
+                           t_cell;
+                     END LOOP;
+                  END IF;
+
+                  t_ind := t_ind + t_len + 4;
+               END LOOP;
+
+               IF t_rows.COUNT > 0
+               THEN
+                  t_c := t_rows (t_rows.LAST).FIRST;
+                  t_type := t_rows (t_rows.LAST) (t_c).data_type;
+
+                  FOR r IN 1 .. t_rows.LAST - 1
+                  LOOP
+                     IF NOT t_rows.EXISTS (r)
+                     THEN
+                        t_rows (r) (t_c).data_type := t_type;
+                     END IF;
+                  END LOOP;
+
+                  IF t_rows.COUNT > 1
+                  THEN
+                     FOR c IN 1 .. t_max_c
+                     LOOP
+                        t_type := NULL;
+
+                        FOR r IN 2 .. t_rows.LAST
+                        LOOP
+                           IF t_rows (r).EXISTS (c)
+                           THEN
+                              t_type := t_rows (r) (c).data_type;
+                              EXIT;
+                           END IF;
+                        END LOOP;
+
+                        IF t_type IS NULL
+                        THEN
+                           IF t_rows (1).EXISTS (c)
+                           THEN
+                              t_type := t_rows (1) (c).data_type;
+                           ELSE
+                              t_type := 'S';
+                           END IF;
+                        END IF;
+
+                        FOR r IN 1 .. t_rows.LAST
+                        LOOP
+                           IF NOT t_rows (r).EXISTS (c)
+                           THEN
+                              t_rows (r) (c).data_type := t_type;
+                           END IF;
+                        END LOOP;
+                     END LOOP;
+                  ELSE
+                     FOR c IN 1 .. t_max_c
+                     LOOP
+                        IF NOT t_rows (1).EXISTS (c)
+                        THEN
+                           t_rows (1) (c).data_type := 'S';
+                        END IF;
+                     END LOOP;
+                  END IF;
+               END IF;
+
+               t_data (t_data.COUNT).rows := t_rows;
+            END IF;
+         END LOOP;
+
+         RETURN t_data;
+      END;
+
+      -----------------
+      ----XLSX解析器----
+      -----------------
+      FUNCTION g2 (i PLS_INTEGER, r PLS_INTEGER, c PLS_INTEGER)
+         RETURN VARCHAR2
+      IS
+         l_return   VARCHAR2 (4000);
+      BEGIN
+         IF l_round = 'Y'
+         THEN
+            l_return :=
+               CASE
+                  WHEN t_data (i).rows (r).EXISTS (c)
+                  THEN
+                     COALESCE (
+                        SUBSTR (t_data (i).rows (r) (c).string_val, 1, 4000),
+                        TO_CHAR (
+                           ROUND (
+                              t_data (i).rows (r) (c).number_val,
+                                14
+                              - SUBSTR (
+                                   TO_CHAR (
+                                      t_data (i).rows (r) (c).number_val,
+                                      'TME'),
+                                   -3)),
+                           'TM9'),
+                        TO_CHAR (t_data (i).rows (r) (c).date_val,
+                                 'yyyy-mm-dd hh24:mi:ss'))
+               END;
+         ELSE
+            l_return :=
+               CASE
+                  WHEN t_data (i).rows (r).EXISTS (c)
+                  THEN
+                     COALESCE (
+                        SUBSTR (t_data (i).rows (r) (c).string_val, 1, 4000),
+                        TO_CHAR (t_data (i).rows (r) (c).number_val, 'TM9'),
+                        TO_CHAR (t_data (i).rows (r) (c).date_val,
+                                 'yyyy-mm-dd hh24:mi:ss'))
+               END;
+         END IF;
+
+         RETURN l_return;
+      --return case when t_data(i)(r).exists(c) then substr( t_data(i)(r)(c), 1, 4000 ) end;
+      END;
+
+      FUNCTION blob2node (p_blob BLOB)
+         RETURN DBMS_XMLDOM.domnode
+      IS
+      BEGIN
+         IF p_blob IS NULL OR DBMS_LOB.getlength (p_blob) = 0
+         THEN
+            RETURN NULL;
+         END IF;
+
+         RETURN DBMS_XMLDOM.makenode (
+                   DBMS_XMLDOM.getdocumentelement (
+                      DBMS_XMLDOM.newdomdocument (
+                         xmltype (p_blob, NLS_CHARSET_ID ('AL32UTF8')))));
+      EXCEPTION
+         WHEN OTHERS
+         THEN
+            DECLARE
+               t_nd             DBMS_XMLDOM.domnode;
+               t_clob           CLOB;
+               t_dest_offset    INTEGER;
+               t_src_offset     INTEGER;
+               t_lang_context   NUMBER := DBMS_LOB.default_lang_ctx;
+               t_warning        INTEGER;
+            BEGIN
+               DBMS_LOB.createtemporary (t_clob, TRUE);
+               t_dest_offset := 1;
+               t_src_offset := 1;
+               DBMS_LOB.converttoclob (t_clob,
+                                       p_blob,
+                                       DBMS_LOB.lobmaxsize,
+                                       t_dest_offset,
+                                       t_src_offset,
+                                       NLS_CHARSET_ID ('AL32UTF8'),
+                                       t_lang_context,
+                                       t_warning);
+               t_nd :=
+                  DBMS_XMLDOM.makenode (
+                     DBMS_XMLDOM.getdocumentelement (
+                        DBMS_XMLDOM.newdomdocument (t_clob)));
+               DBMS_LOB.freetemporary (t_clob);
+               RETURN t_nd;
+            END;
+      END;
+
+      FUNCTION blob2num (p_blob BLOB, p_len INTEGER, p_pos INTEGER)
+         RETURN NUMBER
+      IS
+      BEGIN
+         RETURN UTL_RAW.cast_to_binary_integer (
+                   DBMS_LOB.SUBSTR (p_blob, p_len, p_pos),
+                   UTL_RAW.little_endian);
+      END;
+
+      FUNCTION little_endian (p_big NUMBER, p_bytes PLS_INTEGER := 4)
+         RETURN RAW
+      IS
+      BEGIN
+         RETURN UTL_RAW.SUBSTR (
+                   UTL_RAW.cast_from_binary_integer (p_big,
+                                                     UTL_RAW.little_endian),
+                   1,
+                   p_bytes);
+      END;
+
+      FUNCTION col_alfan (p_col VARCHAR2)
+         RETURN PLS_INTEGER
+      IS
+      BEGIN
+         RETURN   ASCII (SUBSTR (p_col, -1))
+                - 64
+                + NVL ( (ASCII (SUBSTR (p_col, -2, 1)) - 64) * 26, 0)
+                + NVL ( (ASCII (SUBSTR (p_col, -3, 1)) - 64) * 676, 0);
+      END;
+
+      FUNCTION get_file (p_zipped_blob BLOB, p_file_name VARCHAR2)
+         RETURN BLOB
+      IS
+         t_tmp        BLOB;
+         t_ind        INTEGER;
+         t_hd_ind     INTEGER;
+         t_fl_ind     INTEGER;
+         t_encoding   VARCHAR2 (10);
+         t_len        INTEGER;
+      BEGIN
+         t_ind := DBMS_LOB.getlength (p_zipped_blob) - 21;
+
+         LOOP
+            EXIT WHEN    t_ind < 1
+                      OR DBMS_LOB.SUBSTR (p_zipped_blob, 4, t_ind) =
+                            HEXTORAW ('504B0506');
+            t_ind := t_ind - 1;
+         END LOOP;
+
+         IF t_ind <= 0
+         THEN
+            RETURN NULL;
+         END IF;
+
+         t_hd_ind := blob2num (p_zipped_blob, 4, t_ind + 16) + 1;
+
+         FOR i IN 1 .. blob2num (p_zipped_blob, 2, t_ind + 8)
+         LOOP
+            IF UTL_RAW.bit_and (
+                  DBMS_LOB.SUBSTR (p_zipped_blob, 1, t_hd_ind + 9),
+                  HEXTORAW ('08')) = HEXTORAW ('08')
+            THEN
+               t_encoding := 'AL32UTF8';
+            ELSE
+               t_encoding := 'US8PC437';
+            END IF;
+
+            IF p_file_name =
+                  UTL_I18N.raw_to_char (
+                     DBMS_LOB.SUBSTR (
+                        p_zipped_blob,
+                        blob2num (p_zipped_blob, 2, t_hd_ind + 28),
+                        t_hd_ind + 46),
+                     t_encoding)
+            THEN
+               t_len := blob2num (p_zipped_blob, 4, t_hd_ind + 24);
+
+               IF t_len = 0
+               THEN
+                  IF SUBSTR (p_file_name, -1) IN ('/', '\')
+                  THEN
+                     RETURN NULL;
+                  ELSE
+                     RETURN EMPTY_BLOB ();
+                  END IF;
+               END IF;
+
+               IF DBMS_LOB.SUBSTR (p_zipped_blob, 2, t_hd_ind + 10) =
+                     HEXTORAW ('0800')
+               THEN
+                  t_fl_ind := blob2num (p_zipped_blob, 4, t_hd_ind + 42);
+                  t_tmp := HEXTORAW ('1F8B0800000000000003');
+                  DBMS_LOB.COPY (
+                     t_tmp,
+                     p_zipped_blob,
+                     blob2num (p_zipped_blob, 4, t_hd_ind + 20),
+                     11,
+                       t_fl_ind
+                     + 31
+                     + blob2num (p_zipped_blob, 2, t_fl_ind + 27)
+                     + blob2num (p_zipped_blob, 2, t_fl_ind + 29));
+                  DBMS_LOB.append (
+                     t_tmp,
+                     UTL_RAW.CONCAT (
+                        DBMS_LOB.SUBSTR (p_zipped_blob, 4, t_hd_ind + 16),
+                        little_endian (t_len)));
+                  RETURN UTL_COMPRESS.lz_uncompress (t_tmp);
+               END IF;
+
+               IF DBMS_LOB.SUBSTR (p_zipped_blob, 2, t_hd_ind + 10) =
+                     HEXTORAW ('0000')
+               THEN
+                  t_fl_ind := blob2num (p_zipped_blob, 4, t_hd_ind + 42);
+                  DBMS_LOB.createtemporary (t_tmp, TRUE);
+                  DBMS_LOB.COPY (
+                     t_tmp,
+                     p_zipped_blob,
+                     t_len,
+                     1,
+                       t_fl_ind
+                     + 31
+                     + blob2num (p_zipped_blob, 2, t_fl_ind + 27)
+                     + blob2num (p_zipped_blob, 2, t_fl_ind + 29));
+                  RETURN t_tmp;
+               END IF;
+            END IF;
+
+            t_hd_ind :=
+                 t_hd_ind
+               + 46
+               + blob2num (p_zipped_blob, 2, t_hd_ind + 28)
+               + blob2num (p_zipped_blob, 2, t_hd_ind + 30)
+               + blob2num (p_zipped_blob, 2, t_hd_ind + 32);
+         END LOOP;
+
+         RETURN NULL;
+      END;
+
+      FUNCTION parse_xlsx (p_doc       BLOB,
+                           p_sheets    VARCHAR2 := NULL,
+                           p_extra     dbmsoutput_linesarray := NULL)
+         RETURN tp_data
+      IS
+         t_rows          tp_rows;
+         t_data          tp_data;
+         t_date1904      BOOLEAN;
+
+         TYPE tp_date IS TABLE OF BOOLEAN
+            INDEX BY PLS_INTEGER;
+
+         t_xf_date       tp_date;
+         t_numfmt_date   tp_date;
+         t_strings       tp_strings;
+         t_r             VARCHAR2 (32767);
+         t_s             VARCHAR2 (32767);
+         t_t             VARCHAR2 (32767);
+         t_val           VARCHAR2 (32767);
+         t_nr            NUMBER;
+         t_x             PLS_INTEGER;
+         t_xx            PLS_INTEGER;
+         t_c             PLS_INTEGER;
+         t_sc            PLS_INTEGER;
+         t_rr            PLS_INTEGER;
+         t_ns            VARCHAR2 (200)
+            := 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+         t_nd            DBMS_XMLDOM.domnode;
+         t_nd2           DBMS_XMLDOM.domnode;
+         t_nl            DBMS_XMLDOM.domnodelist;
+         t_nl2           DBMS_XMLDOM.domnodelist;
+         t_nl3           DBMS_XMLDOM.domnodelist;
+         t_type          VARCHAR2 (1);
+         t_max_c         PLS_INTEGER;
+      BEGIN
+         --my_log('parsing XLSX');
+         t_nd := blob2node (get_file (p_doc, 'xl/workbook.xml'));
+         t_date1904 :=
+            LOWER (
+               DBMS_XSLPROCESSOR.valueof (t_nd,
+                                          '/workbook/workbookPr/@date1904',
+                                          t_ns)) IN ('true', '1');
+         t_nl :=
+            DBMS_XSLPROCESSOR.selectnodes (t_nd,
+                                           '/workbook/sheets/sheet',
+                                           t_ns);
+
+         FOR i IN 0 .. DBMS_XMLDOM.getlength (t_nl) - 1
+         LOOP
+            t_sheet_ids (i + 1) :=
+               DBMS_XSLPROCESSOR.valueof (
+                  DBMS_XMLDOM.item (t_nl, i),
+                  '@r:id',
+                  'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"');
+            t_sheet_names (i + 1) :=
+               DBMS_XSLPROCESSOR.valueof (DBMS_XMLDOM.item (t_nl, i),
+                                          '@name');
+         END LOOP;
+
+         DBMS_XMLDOM.freenode (t_nd);
+         t_nd := blob2node (get_file (p_doc, 'xl/styles.xml'));
+         t_nl :=
+            DBMS_XSLPROCESSOR.selectnodes (t_nd,
+                                           '/styleSheet/numFmts/numFmt',
+                                           t_ns);
+
+         FOR i IN 0 .. DBMS_XMLDOM.getlength (t_nl) - 1
+         LOOP
+            t_val :=
+               DBMS_XSLPROCESSOR.valueof (DBMS_XMLDOM.item (t_nl, i),
+                                          '@formatCode');
+
+            IF (   INSTR (t_val, 'dd') > 0
+                OR INSTR (t_val, 'mm') > 0
+                OR INSTR (t_val, 'yy') > 0)
+            THEN
+               t_numfmt_date (
+                  DBMS_XSLPROCESSOR.valueof (DBMS_XMLDOM.item (t_nl, i),
+                                             '@numFmtId')) :=
+                  TRUE;
+            END IF;
+         END LOOP;
+
+         t_numfmt_date (14) := TRUE;
+         t_numfmt_date (15) := TRUE;
+         t_numfmt_date (16) := TRUE;
+         t_numfmt_date (17) := TRUE;
+         t_numfmt_date (22) := TRUE;
+         t_nl :=
+            DBMS_XSLPROCESSOR.selectnodes (
+               t_nd,
+               '/styleSheet/cellXfs/xf/@numFmtId',
+               t_ns);
+
+         FOR i IN 0 .. DBMS_XMLDOM.getlength (t_nl) - 1
+         LOOP
+            t_xf_date (i) :=
+               t_numfmt_date.EXISTS (
+                  DBMS_XMLDOM.getnodevalue (DBMS_XMLDOM.item (t_nl, i)));
+         END LOOP;
+
+         DBMS_XMLDOM.freenode (t_nd);
+         t_nd := blob2node (get_file (p_doc, 'xl/sharedStrings.xml'));
+
+         IF NOT DBMS_XMLDOM.isnull (t_nd)
+         THEN
+            t_x := 0;
+            t_xx := 10000;
+
+            LOOP
+               t_nl :=
+                  DBMS_XSLPROCESSOR.selectnodes (
+                     t_nd,
+                        '/sst/si[position()>="'
+                     || TO_CHAR (t_x * t_xx + 1)
+                     || '" and position()<="'
+                     || TO_CHAR ( (t_x + 1) * t_xx)
+                     || '"]',
+                     t_ns);
+               EXIT WHEN DBMS_XMLDOM.getlength (t_nl) = 0;
+               t_x := t_x + 1;
+
+               FOR i IN 0 .. DBMS_XMLDOM.getlength (t_nl) - 1
+               LOOP
+                  t_sc := t_strings.COUNT;
+                  t_strings (t_sc) :=
+                     DBMS_XSLPROCESSOR.valueof (DBMS_XMLDOM.item (t_nl, i),
+                                                '.');
+
+                  IF t_strings (t_sc) IS NULL
+                  THEN
+                     t_strings (t_sc) :=
+                        DBMS_XSLPROCESSOR.valueof (
+                           DBMS_XMLDOM.item (t_nl, i),
+                           '*/text()');
+
+                     IF t_strings (t_sc) IS NULL
+                     THEN
+                        t_nl2 :=
+                           DBMS_XSLPROCESSOR.selectnodes (
+                              DBMS_XMLDOM.item (t_nl, i),
+                              'r/t/text()');
+
+                        FOR j IN 0 .. DBMS_XMLDOM.getlength (t_nl2) - 1
+                        LOOP
+                           t_strings (t_sc) :=
+                                 t_strings (t_sc)
+                              || DBMS_XMLDOM.getnodevalue (
+                                    DBMS_XMLDOM.item (t_nl2, j));
+                        END LOOP;
+                     END IF;
+                  END IF;
+               END LOOP;
+            END LOOP;
+         END IF;
+
+         t_nd2 := blob2node (get_file (p_doc, 'xl/_rels/workbook.xml.rels'));
+
+         FOR i IN 1 .. t_sheet_ids.COUNT
+         LOOP
+            IF (   p_sheets IS NULL
+                OR INSTR (':' || p_sheets || ':', ':' || TO_CHAR (i) || ':') >
+                      0
+                OR INSTR (':' || p_sheets || ':',
+                          ':' || t_sheet_names (i) || ':') > 0)
+            THEN
+               t_max_c := 0;
+               t_rows.delete;
+               t_data (t_data.COUNT + 1).name := t_sheet_names (i);
+               --my_log('read ' || t_sheet_names(i));
+               t_val :=
+                  DBMS_XSLPROCESSOR.valueof (
+                     t_nd2,
+                        '/Relationships/Relationship[@Id="'
+                     || t_sheet_ids (i)
+                     || '"]/@Target',
+                     'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"');
+               t_nd := blob2node (get_file (p_doc, 'xl/' || t_val));
+               t_x := 0;
+               t_xx := 10000;
+
+               LOOP
+                  t_nl3 :=
+                     DBMS_XSLPROCESSOR.selectnodes (
+                        t_nd,
+                           '/worksheet/sheetData/row[position()>="'
+                        || TO_CHAR (t_x * t_xx + 1)
+                        || '" and position()<="'
+                        || TO_CHAR ( (t_x + 1) * t_xx)
+                        || '"]');
+                  EXIT WHEN DBMS_XMLDOM.getlength (t_nl3) = 0;
+                  t_x := t_x + 1;
+
+                  FOR r IN 0 .. DBMS_XMLDOM.getlength (t_nl3) - 1
+                  LOOP
+                     t_nl2 :=
+                        DBMS_XSLPROCESSOR.selectnodes (
+                           DBMS_XMLDOM.item (t_nl3, r),
+                           'c[v]');
+
+                     FOR j IN 0 .. DBMS_XMLDOM.getlength (t_nl2) - 1
+                     LOOP
+                        t_r :=
+                           DBMS_XSLPROCESSOR.valueof (
+                              DBMS_XMLDOM.item (t_nl2, j),
+                              '@r',
+                              t_ns);
+                        t_rr := LTRIM (t_r, RTRIM (t_r, '0123456789'));
+                        t_c := col_alfan (RTRIM (t_r, '0123456789'));
+                        t_max_c := GREATEST (t_max_c, t_c);
+                        t_val :=
+                           DBMS_XSLPROCESSOR.valueof (
+                              DBMS_XMLDOM.item (t_nl2, j),
+                              'v');
+                        t_t :=
+                           DBMS_XSLPROCESSOR.valueof (
+                              DBMS_XMLDOM.item (t_nl2, j),
+                              '@t');
+
+                        IF t_t = 's'
+                        THEN
+                           IF t_val IS NOT NULL
+                           THEN
+                              t_rows (t_rr) (t_c).data_type := 'S';
+                              t_rows (t_rr) (t_c).string_val :=
+                                 t_strings (TO_NUMBER (t_val));
+                           END IF;
+                        ELSIF t_t IN ('str', 'inlineStr', 'e')
+                        THEN
+                           IF t_val IS NOT NULL
+                           THEN
+                              t_rows (t_rr) (t_c).data_type := 'S';
+                              t_rows (t_rr) (t_c).string_val := t_val;
+                           END IF;
+                        ELSE
+                           t_nr :=
+                              TO_NUMBER (
+                                 t_val,
+                                 CASE
+                                    WHEN INSTR (t_val, 'E') = 0
+                                    THEN
+                                       TRANSLATE (t_val,
+                                                  '.012345678,-+',
+                                                  'D999999999')
+                                    ELSE
+                                          TRANSLATE (
+                                             SUBSTR (t_val,
+                                                     1,
+                                                     INSTR (t_val, 'E') - 1),
+                                             '.012345678,-+',
+                                             'D999999999')
+                                       || 'EEEE'
+                                 END,
+                                 'NLS_NUMERIC_CHARACTERS=.,');
+                           t_s :=
+                              DBMS_XSLPROCESSOR.valueof (
+                                 DBMS_XMLDOM.item (t_nl2, j),
+                                 '@s');
+
+                           IF     t_s IS NOT NULL
+                              AND t_xf_date.EXISTS (TO_NUMBER (t_s))
+                              AND t_xf_date (TO_NUMBER (t_s))
+                           THEN
+                              t_rows (t_rr) (t_c).data_type := 'D';
+
+                              IF t_date1904
+                              THEN
+                                 t_rows (t_rr) (t_c).date_val :=
+                                      TO_DATE ('01-01-1904', 'DD-MM-YYYY')
+                                    + t_nr;
+                              ELSE
+                                 t_rows (t_rr) (t_c).date_val :=
+                                      TO_DATE ('01-03-1900', 'DD-MM-YYYY')
+                                    + (t_nr - 61);
+                              END IF;
+                           ELSE
+                              t_rows (t_rr) (t_c).data_type := 'N';
+                              t_rows (t_rr) (t_c).number_val := t_nr;
+                           END IF;
+                        END IF;
+                     END LOOP;
+                  END LOOP;
+               END LOOP;
+
+               DBMS_XMLDOM.freenode (t_nd);
+
+               IF t_rows.COUNT > 0
+               THEN
+                  t_c := t_rows (t_rows.LAST).FIRST;
+                  t_type := t_rows (t_rows.LAST) (t_c).data_type;
+
+                  FOR r IN 1 .. t_rows.LAST - 1
+                  LOOP
+                     IF NOT t_rows.EXISTS (r)
+                     THEN
+                        t_rows (r) (t_c).data_type := t_type;
+                     END IF;
+                  END LOOP;
+
+                  IF t_rows.COUNT > 1
+                  THEN
+                     FOR c IN 1 .. t_max_c
+                     LOOP
+                        t_type := NULL;
+
+                        FOR r IN 2 .. t_rows.LAST
+                        LOOP
+                           IF t_rows (r).EXISTS (c)
+                           THEN
+                              t_type := t_rows (r) (c).data_type;
+                              EXIT;
+                           END IF;
+                        END LOOP;
+
+                        IF t_type IS NULL
+                        THEN
+                           IF t_rows (1).EXISTS (c)
+                           THEN
+                              t_type := t_rows (1) (c).data_type;
+                           ELSE
+                              t_type := 'S';
+                           END IF;
+                        END IF;
+
+                        FOR r IN 1 .. t_rows.LAST
+                        LOOP
+                           IF NOT t_rows (r).EXISTS (c)
+                           THEN
+                              t_rows (r) (c).data_type := t_type;
+                           END IF;
+                        END LOOP;
+                     END LOOP;
+                  ELSE
+                     FOR c IN 1 .. t_max_c
+                     LOOP
+                        IF NOT t_rows (1).EXISTS (c)
+                        THEN
+                           t_rows (1) (c).data_type := 'S';
+                        END IF;
+                     END LOOP;
+                  END IF;
+               END IF;
+
+               t_data (t_data.COUNT).rows := t_rows;
+            END IF;
+         END LOOP;
+
+         DBMS_XMLDOM.freenode (t_nd2);
+         RETURN t_data;
+      END;
+
+   BEGIN
+      IF DBMS_LOB.SUBSTR (P_DOCUMENT, 8, 1) = HEXTORAW ('D0CF11E0A1B11AE1')
+      THEN
+         --dbms_output.put_line( 'parsing XLS' );
+         --t_what := 'XLS-file';
+         --t_collection_base := :col_name;
+         L_PROCESS_PHASE := 0;
+         t_data := parse_xls (P_DOCUMENT, P_SHEETS);
+         L_PROCESS_PHASE := 10;
+
+         --DBMS_OUTPUT.PUT_LINE('parsed,' || t_data.count || ' sheets found');
+         --my_log('moving to Collection(s)');
+         --apex_collection.create_or_truncate_collection(t_collection_base ||'_$MAP');
+         FOR i IN 1 .. t_data.COUNT
+         LOOP
+            --t_collection_name := t_collection_base || to_char(nullif(i, 1));
+            --my_log('moving sheet ' || i || ': ' || t_data(i).name || ' to ' ||t_collection_name);
+            /*
+            apex_collection.add_member(t_collection_base || '_$MAP',
+                                       p_c001 => t_data(i).name,
+                                       p_c002 => t_collection_name,
+                                       p_n001 => i);
+            apex_collection.create_or_truncate_collection(t_collection_name);*/
+            IF t_data (i).rows.COUNT () > 0
+            THEN
+               --t2.delete;
+               --DBMS_OUTPUT.PUT_LINE('t_data(i).rows.count():' || t_data(i).rows.count());
+               --DBMS_OUTPUT.PUT_LINE('t_sheets(i).name:' || t_sheets(i-1).name);
+               FOR r IN 1 .. t_data (i).rows.LAST
+               LOOP
+                  IF t_data (i).rows.EXISTS (r)
+                  THEN
+                     g_rec :=g_rec_empty;
+                     g_rec.SOURCE_TYPE:='EXCEL-XLS' ;
+                     g_rec.BATCH_CODE:= t_sheets (i - 1).name; --P_BATCH_CODE   
+                     g_rec.BATCH_NAME:= NULL   ;    --P_BATCH_NAME  
+                     g_rec.ROW_NUM:= r;
+                     g_rec.ATTRIBUTE1    :=g1 (i, r, 1);
+                     g_rec.ATTRIBUTE2    :=g1 (i, r, 2);
+                     g_rec.ATTRIBUTE3    :=g1 (i, r, 3);
+                     g_rec.ATTRIBUTE4    :=g1 (i, r, 4);
+                     g_rec.ATTRIBUTE5    :=g1 (i, r, 5);
+                     g_rec.ATTRIBUTE6    :=g1 (i, r, 6);
+                     g_rec.ATTRIBUTE7    :=g1 (i, r, 7);
+                     g_rec.ATTRIBUTE8    :=g1 (i, r, 8);
+                     g_rec.ATTRIBUTE9    :=g1 (i, r, 9);
+                     g_rec.ATTRIBUTE10    :=g1 (i, r, 10);
+                     g_rec.ATTRIBUTE11    :=g1 (i, r, 11);
+                     g_rec.ATTRIBUTE12    :=g1 (i, r, 12);
+                     g_rec.ATTRIBUTE13    :=g1 (i, r, 13);
+                     g_rec.ATTRIBUTE14    :=g1 (i, r, 14);
+                     g_rec.ATTRIBUTE15    :=g1 (i, r, 15);
+                     g_rec.ATTRIBUTE16    :=g1 (i, r, 16);
+                     g_rec.ATTRIBUTE17    :=g1 (i, r, 17);
+                     g_rec.ATTRIBUTE18    :=g1 (i, r, 18);
+                     g_rec.ATTRIBUTE19    :=g1 (i, r, 19);
+                     g_rec.ATTRIBUTE20    :=g1 (i, r, 20);
+                     g_rec.ATTRIBUTE21    :=g1 (i, r, 21);
+                     g_rec.ATTRIBUTE22    :=g1 (i, r, 22);
+                     g_rec.ATTRIBUTE23    :=g1 (i, r, 23);
+                     g_rec.ATTRIBUTE24    :=g1 (i, r, 24);
+                     g_rec.ATTRIBUTE25    :=g1 (i, r, 25);
+                     g_rec.ATTRIBUTE26    :=g1 (i, r, 26);
+                     g_rec.ATTRIBUTE27    :=g1 (i, r, 27);
+                     g_rec.ATTRIBUTE28    :=g1 (i, r, 28);
+                     g_rec.ATTRIBUTE29    :=g1 (i, r, 29);
+                     g_rec.ATTRIBUTE30    :=g1 (i, r, 30);
+                     g_rec.ATTRIBUTE31    :=g1 (i, r, 31);
+                     g_rec.ATTRIBUTE32    :=g1 (i, r, 32);
+                     g_rec.ATTRIBUTE33    :=g1 (i, r, 33);
+                     g_rec.ATTRIBUTE34    :=g1 (i, r, 34);
+                     g_rec.ATTRIBUTE35    :=g1 (i, r, 35);
+                     g_rec.ATTRIBUTE36    :=g1 (i, r, 36);
+                     g_rec.ATTRIBUTE37    :=g1 (i, r, 37);
+                     g_rec.ATTRIBUTE38    :=g1 (i, r, 38);
+                     g_rec.ATTRIBUTE39    :=g1 (i, r, 39);
+                     g_rec.ATTRIBUTE40    :=g1 (i, r, 40);
+                     g_rec.ATTRIBUTE41    :=g1 (i, r, 41);
+                     g_rec.ATTRIBUTE42    :=g1 (i, r, 42);
+                     g_rec.ATTRIBUTE43    :=g1 (i, r, 43);
+                     g_rec.ATTRIBUTE44    :=g1 (i, r, 44);
+                     g_rec.ATTRIBUTE45    :=g1 (i, r, 45);
+                     g_rec.ATTRIBUTE46    :=g1 (i, r, 46);
+                     g_rec.ATTRIBUTE47    :=g1 (i, r, 47);
+                     g_rec.ATTRIBUTE48    :=g1 (i, r, 48);
+                     g_rec.ATTRIBUTE49    :=g1 (i, r, 49);
+                     g_rec.ATTRIBUTE50    :=g1 (i, r, 50);
+                     g_rec.ATTRIBUTE51    :=g1 (i, r, 51);
+                     g_rec.ATTRIBUTE52    :=g1 (i, r, 52);
+                     g_rec.ATTRIBUTE53    :=g1 (i, r, 53);
+                     g_rec.ATTRIBUTE54    :=g1 (i, r, 54);
+                     g_rec.ATTRIBUTE55    :=g1 (i, r, 55);
+                     g_rec.ATTRIBUTE56    :=g1 (i, r, 56);
+                     g_rec.ATTRIBUTE57    :=g1 (i, r, 57);
+                     g_rec.ATTRIBUTE58    :=g1 (i, r, 58);
+                     g_rec.ATTRIBUTE59    :=g1 (i, r, 59);
+                     g_rec.ATTRIBUTE60    :=g1 (i, r, 60);
+                     g_rec.ATTRIBUTE61    :=g1 (i, r, 61);
+                     g_rec.ATTRIBUTE62    :=g1 (i, r, 62);
+                     g_rec.ATTRIBUTE63    :=g1 (i, r, 63);
+                     g_rec.ATTRIBUTE64    :=g1 (i, r, 64);
+                     g_rec.ATTRIBUTE65    :=g1 (i, r, 65);
+                     g_rec.ATTRIBUTE66    :=g1 (i, r, 66);
+                     g_rec.ATTRIBUTE67    :=g1 (i, r, 67);
+                     g_rec.ATTRIBUTE68    :=g1 (i, r, 68);
+                     g_rec.ATTRIBUTE69    :=g1 (i, r, 69);
+                     g_rec.ATTRIBUTE70    :=g1 (i, r, 70);
+                     g_rec.ATTRIBUTE71    :=g1 (i, r, 71);
+                     g_rec.ATTRIBUTE72    :=g1 (i, r, 72);
+                     g_rec.ATTRIBUTE73    :=g1 (i, r, 73);
+                     g_rec.ATTRIBUTE74    :=g1 (i, r, 74);
+                     g_rec.ATTRIBUTE75    :=g1 (i, r, 75);
+                     g_rec.ATTRIBUTE76    :=g1 (i, r, 76);
+                     g_rec.ATTRIBUTE77    :=g1 (i, r, 77);
+                     g_rec.ATTRIBUTE78    :=g1 (i, r, 78);
+                     g_rec.ATTRIBUTE79    :=g1 (i, r, 79);
+                     g_rec.ATTRIBUTE80    :=g1 (i, r, 80);
+                     g_rec.ATTRIBUTE81    :=g1 (i, r, 81);
+                     g_rec.ATTRIBUTE82    :=g1 (i, r, 82);
+                     g_rec.ATTRIBUTE83    :=g1 (i, r, 83);
+                     g_rec.ATTRIBUTE84    :=g1 (i, r, 84);
+                     g_rec.ATTRIBUTE85    :=g1 (i, r, 85);
+                     g_rec.ATTRIBUTE86    :=g1 (i, r, 86);
+                     g_rec.ATTRIBUTE87    :=g1 (i, r, 87);
+                     g_rec.ATTRIBUTE88    :=g1 (i, r, 88);
+                     g_rec.ATTRIBUTE89    :=g1 (i, r, 89);
+                     g_rec.ATTRIBUTE90    :=g1 (i, r, 90);
+                     g_rec.ATTRIBUTE91    :=g1 (i, r, 91);
+                     g_rec.ATTRIBUTE92    :=g1 (i, r, 92);
+                     g_rec.ATTRIBUTE93    :=g1 (i, r, 93);
+                     g_rec.ATTRIBUTE94    :=g1 (i, r, 94);
+                     g_rec.ATTRIBUTE95    :=g1 (i, r, 95);
+                     g_rec.ATTRIBUTE96    :=g1 (i, r, 96);
+                     g_rec.ATTRIBUTE97    :=g1 (i, r, 97);
+                     g_rec.ATTRIBUTE98    :=g1 (i, r, 98);
+                     g_rec.ATTRIBUTE99    :=g1 (i, r, 99);
+                     g_rec.ATTRIBUTE100    :=g1 (i, r, 100);
+                     g_rec.PROCESS_FLAG :=  0;
+                     g_rec.PROCESS_MESSAGE := NULL;                 
+                     insert into XX_PUB_DATA_UPLOAD_TMP values g_rec;
+                  ELSE
+                     --t2(1)(r) := ''
+                     NULL;
+                  END IF;
+               END LOOP;
+            END IF;
+         END LOOP;
+      ELSIF DBMS_LOB.SUBSTR (P_DOCUMENT, 4, 1) = HEXTORAW ('504B0304')
+      THEN
+         --log( 'parsing XLSX' );
+         --t_what := 'XLSX-file';
+         --t_collection_base := :col_name;
+         t_data := parse_xlsx (P_DOCUMENT, P_SHEETS);
+
+         --my_log('parsed,' || t_data.count || ' sheets found');
+         --my_log('moving to Collection(s)');
+         --apex_collection.create_or_truncate_collection(t_collection_base ||'_$MAP');
+         FOR i IN 1 .. t_data.COUNT
+         LOOP
+            /*
+            t_collection_name := t_collection_base || to_char(nullif(i, 1));
+            my_log('moving sheet ' || i || ': ' || t_data(i).name || ' to ' ||t_collection_name);
+            apex_collection.add_member(t_collection_base || '_$MAP',
+                                       p_c001 => t_data(i).name,
+                                       p_c002 => t_collection_name,
+                                       p_n001 => i);
+            apex_collection.create_or_truncate_collection(t_collection_name);*/
+            IF t_data (i).rows.COUNT () > 0
+            THEN
+               --t2.delete;
+               FOR r IN 1 .. t_data (i).rows.LAST
+               LOOP
+                  IF t_data (i).rows.EXISTS (r)
+                  THEN
+                     g_rec :=g_rec_empty;
+                     g_rec.SOURCE_TYPE:='EXCEL-XLSX' ;
+                     g_rec.BATCH_CODE:= t_sheet_names (i) ;
+                     g_rec.BATCH_NAME:= NULL   ;    --P_BATCH_NAME  
+                     g_rec.ROW_NUM:= r;
+                     g_rec.ATTRIBUTE1    :=g2 (i, r, 1);
+                     g_rec.ATTRIBUTE2    :=g2 (i, r, 2);
+                     g_rec.ATTRIBUTE3    :=g2 (i, r, 3);
+                     g_rec.ATTRIBUTE4    :=g2 (i, r, 4);
+                     g_rec.ATTRIBUTE5    :=g2 (i, r, 5);
+                     g_rec.ATTRIBUTE6    :=g2 (i, r, 6);
+                     g_rec.ATTRIBUTE7    :=g2 (i, r, 7);
+                     g_rec.ATTRIBUTE8    :=g2 (i, r, 8);
+                     g_rec.ATTRIBUTE9    :=g2 (i, r, 9);
+                     g_rec.ATTRIBUTE10    :=g2 (i, r, 10);
+                     g_rec.ATTRIBUTE11    :=g2 (i, r, 11);
+                     g_rec.ATTRIBUTE12    :=g2 (i, r, 12);
+                     g_rec.ATTRIBUTE13    :=g2 (i, r, 13);
+                     g_rec.ATTRIBUTE14    :=g2 (i, r, 14);
+                     g_rec.ATTRIBUTE15    :=g2 (i, r, 15);
+                     g_rec.ATTRIBUTE16    :=g2 (i, r, 16);
+                     g_rec.ATTRIBUTE17    :=g2 (i, r, 17);
+                     g_rec.ATTRIBUTE18    :=g2 (i, r, 18);
+                     g_rec.ATTRIBUTE19    :=g2 (i, r, 19);
+                     g_rec.ATTRIBUTE20    :=g2 (i, r, 20);
+                     g_rec.ATTRIBUTE21    :=g2 (i, r, 21);
+                     g_rec.ATTRIBUTE22    :=g2 (i, r, 22);
+                     g_rec.ATTRIBUTE23    :=g2 (i, r, 23);
+                     g_rec.ATTRIBUTE24    :=g2 (i, r, 24);
+                     g_rec.ATTRIBUTE25    :=g2 (i, r, 25);
+                     g_rec.ATTRIBUTE26    :=g2 (i, r, 26);
+                     g_rec.ATTRIBUTE27    :=g2 (i, r, 27);
+                     g_rec.ATTRIBUTE28    :=g2 (i, r, 28);
+                     g_rec.ATTRIBUTE29    :=g2 (i, r, 29);
+                     g_rec.ATTRIBUTE30    :=g2 (i, r, 30);
+                     g_rec.ATTRIBUTE31    :=g2 (i, r, 31);
+                     g_rec.ATTRIBUTE32    :=g2 (i, r, 32);
+                     g_rec.ATTRIBUTE33    :=g2 (i, r, 33);
+                     g_rec.ATTRIBUTE34    :=g2 (i, r, 34);
+                     g_rec.ATTRIBUTE35    :=g2 (i, r, 35);
+                     g_rec.ATTRIBUTE36    :=g2 (i, r, 36);
+                     g_rec.ATTRIBUTE37    :=g2 (i, r, 37);
+                     g_rec.ATTRIBUTE38    :=g2 (i, r, 38);
+                     g_rec.ATTRIBUTE39    :=g2 (i, r, 39);
+                     g_rec.ATTRIBUTE40    :=g2 (i, r, 40);
+                     g_rec.ATTRIBUTE41    :=g2 (i, r, 41);
+                     g_rec.ATTRIBUTE42    :=g2 (i, r, 42);
+                     g_rec.ATTRIBUTE43    :=g2 (i, r, 43);
+                     g_rec.ATTRIBUTE44    :=g2 (i, r, 44);
+                     g_rec.ATTRIBUTE45    :=g2 (i, r, 45);
+                     g_rec.ATTRIBUTE46    :=g2 (i, r, 46);
+                     g_rec.ATTRIBUTE47    :=g2 (i, r, 47);
+                     g_rec.ATTRIBUTE48    :=g2 (i, r, 48);
+                     g_rec.ATTRIBUTE49    :=g2 (i, r, 49);
+                     g_rec.ATTRIBUTE50    :=g2 (i, r, 50);
+                     g_rec.ATTRIBUTE51    :=g2 (i, r, 51);
+                     g_rec.ATTRIBUTE52    :=g2 (i, r, 52);
+                     g_rec.ATTRIBUTE53    :=g2 (i, r, 53);
+                     g_rec.ATTRIBUTE54    :=g2 (i, r, 54);
+                     g_rec.ATTRIBUTE55    :=g2 (i, r, 55);
+                     g_rec.ATTRIBUTE56    :=g2 (i, r, 56);
+                     g_rec.ATTRIBUTE57    :=g2 (i, r, 57);
+                     g_rec.ATTRIBUTE58    :=g2 (i, r, 58);
+                     g_rec.ATTRIBUTE59    :=g2 (i, r, 59);
+                     g_rec.ATTRIBUTE60    :=g2 (i, r, 60);
+                     g_rec.ATTRIBUTE61    :=g2 (i, r, 61);
+                     g_rec.ATTRIBUTE62    :=g2 (i, r, 62);
+                     g_rec.ATTRIBUTE63    :=g2 (i, r, 63);
+                     g_rec.ATTRIBUTE64    :=g2 (i, r, 64);
+                     g_rec.ATTRIBUTE65    :=g2 (i, r, 65);
+                     g_rec.ATTRIBUTE66    :=g2 (i, r, 66);
+                     g_rec.ATTRIBUTE67    :=g2 (i, r, 67);
+                     g_rec.ATTRIBUTE68    :=g2 (i, r, 68);
+                     g_rec.ATTRIBUTE69    :=g2 (i, r, 69);
+                     g_rec.ATTRIBUTE70    :=g2 (i, r, 70);
+                     g_rec.ATTRIBUTE71    :=g2 (i, r, 71);
+                     g_rec.ATTRIBUTE72    :=g2 (i, r, 72);
+                     g_rec.ATTRIBUTE73    :=g2 (i, r, 73);
+                     g_rec.ATTRIBUTE74    :=g2 (i, r, 74);
+                     g_rec.ATTRIBUTE75    :=g2 (i, r, 75);
+                     g_rec.ATTRIBUTE76    :=g2 (i, r, 76);
+                     g_rec.ATTRIBUTE77    :=g2 (i, r, 77);
+                     g_rec.ATTRIBUTE78    :=g2 (i, r, 78);
+                     g_rec.ATTRIBUTE79    :=g2 (i, r, 79);
+                     g_rec.ATTRIBUTE80    :=g2 (i, r, 80);
+                     g_rec.ATTRIBUTE81    :=g2 (i, r, 81);
+                     g_rec.ATTRIBUTE82    :=g2 (i, r, 82);
+                     g_rec.ATTRIBUTE83    :=g2 (i, r, 83);
+                     g_rec.ATTRIBUTE84    :=g2 (i, r, 84);
+                     g_rec.ATTRIBUTE85    :=g2 (i, r, 85);
+                     g_rec.ATTRIBUTE86    :=g2 (i, r, 86);
+                     g_rec.ATTRIBUTE87    :=g2 (i, r, 87);
+                     g_rec.ATTRIBUTE88    :=g2 (i, r, 88);
+                     g_rec.ATTRIBUTE89    :=g2 (i, r, 89);
+                     g_rec.ATTRIBUTE90    :=g2 (i, r, 90);
+                     g_rec.ATTRIBUTE91    :=g2 (i, r, 91);
+                     g_rec.ATTRIBUTE92    :=g2 (i, r, 92);
+                     g_rec.ATTRIBUTE93    :=g2 (i, r, 93);
+                     g_rec.ATTRIBUTE94    :=g2 (i, r, 94);
+                     g_rec.ATTRIBUTE95    :=g2 (i, r, 95);
+                     g_rec.ATTRIBUTE96    :=g2 (i, r, 96);
+                     g_rec.ATTRIBUTE97    :=g2 (i, r, 97);
+                     g_rec.ATTRIBUTE98    :=g2 (i, r, 98);
+                     g_rec.ATTRIBUTE99    :=g2 (i, r, 99);
+                     g_rec.ATTRIBUTE100    :=g2 (i, r, 100);
+                     g_rec.PROCESS_FLAG :=  0;
+                     g_rec.PROCESS_MESSAGE := NULL;                 
+                     insert into XX_PUB_DATA_UPLOAD_TMP values g_rec;
+                  ELSE
+                     --t2(1)(r) := '';
+                     NULL;
+                  END IF;
+               END LOOP;
+            END IF;
+         END LOOP;
+      --RETURN CONVER_XLSX_TO_TAB(P_DOCUMENT,P_SHEETS,P_RAISE);
+      ELSE
+         IF P_RAISE = 1
+         THEN
+            L_PROCESS_PHASE := 97;
+            RAISE NO_DATA_FOUND;
+         ELSE
+            L_PROCESS_PHASE := 98;
+            NULL;
+         END IF;
+      END IF;
+
+      L_PROCESS_PHASE := 99;
+      RETURN;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         IF P_RAISE = 1
+         THEN
+            --DBMS_OUTPUT.PUT_LINE (R_LINE || '-' || V_PROCESS_MESSAGE);
+            RAISE_APPLICATION_ERROR (
+               '-20001'                                   --'ERR_DEFAULT_CODE'
+                       ,
+               SQLERRM || 'ERROR RAISE!程序進度:' || L_PROCESS_PHASE);
+         ELSE
+            RETURN;
+         --return -1
+         END IF;
+   END;
+END XX_PUB_DATA_UPLOAD_PKG;
+/
+
 PACKAGE BODY file_pkg
 IS
    FUNCTION open_file
@@ -35,7 +2327,8 @@ IS
 
       IF (l_url IS NULL)
       THEN
-         RAISE form_trigger_failure;
+         fnd_message.set_string('找不到上傳網頁!');
+         fnd_message.error;
       END IF;
 
       -- Open web page
@@ -74,7 +2367,7 @@ IS
    PROCEDURE load_excel(p_block         VARCHAR2 --要匯入的畫面區塊
                        ,p_field         VARCHAR2 --要匯入的畫面欄位名
                        ,p_col_separate  VARCHAR2 --chr()--空字串為Null--分行符號
-                       ,p_row_separate  VARCHAR2 --chr()--空字串為Null--分列符號
+                       ,p_row_separate  VARCHAR2 --chr()--空字串為Null--分欄符號
                        ,p_begin_row     NUMBER DEFAULT 1 --讀取的起始列
                        ,p_begin_column  NUMBER DEFAULT 1 --讀取的起始行
                                                         )
@@ -125,12 +2418,13 @@ IS
 
             IF ID_NULL(item_id)
             THEN
-               fnd_message.debug('Item : '
-                                 || p_block
-                                 || '.'
-                                 || my_field(i)
-                                 || ' does not exist !!');
-               RAISE form_trigger_failure;
+               fnd_message.set_string('Item : '
+                                      || p_block
+                                      || '.'
+                                      || my_field(i)
+                                      || ' does not exist !!');
+               fnd_message.error;
+               RETURN;
             END IF;
          END;
       END LOOP;
@@ -419,4 +2713,189 @@ IS
              ,'system.message_level');
       END IF;
    END clear_fnd_lob;
+
+   --- 開始解讀檔案內容
+
+   PROCEDURE load_xlsx(p_block         VARCHAR2 --要匯入的畫面區塊
+                      ,p_field         VARCHAR2 --要匯入的畫面欄位名
+                      --                      ,p_col_separate  VARCHAR2 --chr()--空字串為Null--分行符號
+                      --                      ,p_row_separate  VARCHAR2 --chr()--空字串為Null--分欄符號
+                      ,p_begin_row     NUMBER DEFAULT 1 --讀取的起始列
+                      ,p_begin_column  NUMBER DEFAULT 1 --讀取的起始行
+                                                       )
+   IS
+      fle_gfm_id NUMBER;
+      my_field DBMS_UTILITY.uncl_array;
+      my_field_cnt BINARY_INTEGER;
+      my_field_loc BINARY_INTEGER := 1;
+      v_file_data BLOB;
+      v_cursor INTEGER;
+      v_description_table DBMS_SQL.desc_tab3;
+      v_column_value VARCHAR2(4000);
+      v_query VARCHAR2(32767);
+      v_dummy NUMBER;
+
+      v_column DBMS_UTILITY.lname_array;
+
+      TYPE v_lname_array_t IS TABLE OF DBMS_UTILITY.lname_array
+         INDEX BY BINARY_INTEGER;
+
+      v_row v_lname_array_t;
+      v_row_num BINARY_INTEGER := 0;
+
+      v_file_ext VARCHAR2(256);
+   BEGIN
+      GO_BLOCK(p_block);
+      CLEAR_BLOCK(no_validate);
+      --Sperate p_field to MY_FIELD (Example: 'x,y,z' -> 'x', 'y', 'z')
+      DBMS_UTILITY.comma_to_table(p_field
+                                 ,my_field_cnt
+                                 ,my_field);
+
+      --Check all columns is exist BLACK.FIELD
+      FOR i IN 1 .. my_field_cnt
+      LOOP
+         my_field(i) := LTRIM(RTRIM(my_field(i)));
+
+         DECLARE
+            item_id item;
+         BEGIN
+            item_id := FIND_ITEM(p_block
+                                 || '.'
+                                 || my_field(i));
+
+            IF ID_NULL(item_id)
+            THEN
+               fnd_message.set_string('Item : '
+                                      || p_block
+                                      || '.'
+                                      || my_field(i)
+                                      || ' does not exist !!');
+               fnd_message.error;
+               RETURN;
+            END IF;
+         END;
+      END LOOP;
+
+      ------------------------
+      ------------------------
+      -- Open file
+      fle_gfm_id := file_pkg.open_file;
+
+      IF fle_gfm_id < 0
+      THEN
+         fnd_message.set_string('找不到檔案!');
+         fnd_message.error;
+         RETURN;
+      END IF;
+
+      FOR r_fl IN (SELECT file_name
+                         ,file_data
+                     FROM fnd_lobs
+                    WHERE 0 = 0
+                          AND file_id = fle_gfm_id)
+      LOOP
+         :parameter.fle_gfm_id := fle_gfm_id;
+         :parameter.fle_file_name := r_fl.file_name;
+         v_file_ext := SUBSTR(r_fl.file_name
+                             ,  INSTR(r_fl.file_name
+                                     ,'.'
+                                     ,-1)
+                              + 1);
+         v_file_data := r_fl.file_data;
+      END LOOP;
+
+      --檔案格式判斷
+      IF UPPER(v_file_ext) NOT IN ('XLS'
+                                  ,'XLSX')
+      THEN
+         fnd_message.set_string('您所選取的檔案型態不為EXCEL檔,請重新選取!');
+         fnd_message.error;
+         RETURN;
+      END IF;
+
+      xx_pub_data_upload_pkg.conver_excel_to_tab(v_file_data
+                                                ,NULL
+                                                ,1);
+
+      IF fle_gfm_id > 0
+      THEN
+         FOR r_col IN (  SELECT column_name
+                           FROM all_tab_columns c
+                               ,all_tables t
+                          WHERE c.owner = t.owner
+                                AND c.table_name = t.table_name
+                                AND c.table_name = UPPER('xx_pub_data_upload_tmp')
+                                AND c.column_name LIKE UPPER('ATTRIBUTE%')
+                       ORDER BY TO_NUMBER(LTRIM(column_name
+                                               ,'ATTRIBUTE')))
+         LOOP
+            v_query := NULLIF(v_query
+                              || ','
+                             ,',')
+                       || r_col.column_name;
+         END LOOP;
+
+         v_query := 'select '
+                    || v_query
+                    || ' from xx_pub_data_upload_tmp where row_num >= '
+                    || p_begin_row
+                    || ' order by row_num';
+         v_cursor := DBMS_SQL.open_cursor;
+         DBMS_SQL.parse(v_cursor
+                       ,v_query
+                       ,1);
+         DBMS_SQL.describe_columns3(v_cursor
+                                   ,v_dummy
+                                   ,v_description_table);
+
+         FOR i IN p_begin_column .. my_field_cnt --v_description_table.COUNT
+         LOOP
+            DBMS_SQL.define_column(v_cursor
+                                  ,i
+                                  ,v_column_value
+                                  ,4000);
+         END LOOP;
+
+         v_dummy := DBMS_SQL.execute(v_cursor);
+
+         LOOP
+            EXIT WHEN DBMS_SQL.fetch_rows(v_cursor) <= 0;
+            v_row_num :=   v_row_num
+                         + 1;
+            my_field_loc := 1;
+
+            FOR i IN p_begin_column .. my_field_cnt --v_description_table.COUNT
+            LOOP
+               DBMS_SQL.COLUMN_VALUE(v_cursor
+                                    ,i
+                                    ,v_column_value);
+               --               v_column(i) := v_column_value;
+               COPY(v_column_value
+                   ,p_block
+                    || '.'
+                    || my_field(my_field_loc));
+               my_field_loc :=   my_field_loc
+                               + 1;
+            END LOOP;
+
+            --            v_row(v_row_num) := v_column;--mark by Rory for 若是用2維陣列，呼叫其它某些程式，會掛掉，例如：rollback
+            NEXT_RECORD;
+         END LOOP;
+
+         DBMS_SQL.close_cursor(v_cursor);
+
+         DELETE xxyens.xx_pub_data_upload_tmp;
+         FIRST_RECORD;
+      END IF;
+
+      -- Clear LOB File
+      file_pkg.clear_fnd_lob;
+   EXCEPTION
+      WHEN OTHERS
+      THEN
+         fnd_message.set_string(SQLERRM);
+         fnd_message.error;
+         RETURN;
+   END load_xlsx;
 END file_pkg;
