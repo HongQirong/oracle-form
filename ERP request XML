@@ -479,6 +479,7 @@ EXCEPTION
       DBMS_OUTPUT.put_line('</ERRMSG>');
       DBMS_OUTPUT.put_line('</MAIN>');
 END;
+/
 ------------------------------------------------------------------
 /*
 <?for-each-group: G_1;./C1_SHEET_NAME?><?spreadsheet-sheet-name:{C1_SHEET_NAME}?> <?if:C1_SHEET_NAME ='報表A'?>
@@ -541,7 +542,7 @@ EXCEPTION
   WHEN OTHERS THEN
     ROLLBACK;
 END XXJBHOMEWORK2;
-
+/
 CREATE OR REPLACE PROCEDURE APPS.XXFND_XMLCREATOR_SP(p_query IN VARCHAR2
                                             ,p_query1 IN VARCHAR2
                                             ,p_query2 IN VARCHAR2
@@ -810,6 +811,509 @@ EXCEPTION
     ROLLBACK;
 
 END XXFND_XMLCREATOR_SP;
+/
+CREATE OR REPLACE PACKAGE BODY apps.xxapry008_pkg
+IS
+   -------------------------------------------------------------------------------------
+   --月結總表給號程式
+   PROCEDURE generate_total_seq(p_period_ym IN VARCHAR2)
+   AS
+      CURSOR c
+      IS
+           SELECT aia.org_id
+                 ,av.vendor_id
+                 ,aia.vendor_site_id
+                 ,aia.invoice_id
+                 ,aia.invoice_type_lookup_code
+                 ,av.vendor_name
+                 ,aia.invoice_num
+             FROM ap_suppliers av
+                 ,ap_invoices_all aia
+                 ,ap_batches_all aba
+            WHERE 1 = 1
+                  AND av.vendor_id = aia.vendor_id
+                  AND aia.batch_id = aba.batch_id(+)
+                  AND NVL(aia.attribute14, 'X') = 'Y'
+                  AND TO_CHAR(aia.gl_date
+                             ,'RRRRMM') = p_period_ym
+                  AND aia.org_id IN (SELECT hou.organization_id
+                                       FROM hr_operating_units hou
+                                      WHERE hou.set_of_books_id = 2022)
+                  AND aia.pay_group_lookup_code IN (SELECT flv.lookup_code
+                                                      FROM fnd_lookup_values flv
+                                                     WHERE 1 = 1
+                                                           AND flv.lookup_type = 'PAY GROUP'
+                                                           AND flv.language = 'ZHT'
+                                                           AND (flv.description LIKE '%台北月結%'))
+         /*
+         AND AIA.PAY_GROUP_LOOKUP_CODE NOT IN
+             (SELECT FLV.LOOKUP_CODE
+                FROM FND_LOOKUP_VALUES FLV
+               WHERE 1 = 1
+                 AND FLV.LOOKUP_TYPE = 'PAY GROUP'
+                 AND FLV.LANGUAGE = 'ZHT'
+                 AND (FLV.DESCRIPTION LIKE '%國內採購%' OR FLV.DESCRIPTION LIKE '%不定期付款%')
+             )
+         AND AIA.BATCH_ID IN
+             (SELECT BATCH_ID
+                FROM (SELECT ABA.BATCH_ID
+                            ,AIA1.PAY_GROUP_LOOKUP_CODE
+                        FROM AP_BATCHES_ALL  ABA
+                            ,AP_INVOICES_ALL AIA1
+                       WHERE ABA.BATCH_ID(+) = AIA1.BATCH_ID
+                         AND TO_CHAR(AIA1.GL_DATE, 'RRRRMM') = P_PERIOD_YM
+                       GROUP BY ABA.BATCH_ID
+                               ,AIA1.PAY_GROUP_LOOKUP_CODE)
+              HAVING COUNT(*) > 1
+               GROUP BY BATCH_ID)
+       */
+         ORDER BY av.vendor_name
+                 ,aba.batch_name
+                 ,aia.pay_group_lookup_code
+                 ,aia.invoice_num
+                 ,(SELECT NVL(SUM(  t.invoice_amount
+                                  * NVL(t.exchange_rate, 1))
+                             ,0)
+                     FROM ap_invoices_all t
+                    WHERE t.org_id = aba.org_id
+                          AND t.batch_id = aba.batch_id
+                          AND NVL(aia.attribute14, 'X') = 'Y'
+                          AND TO_CHAR(aia.gl_date
+                                     ,'RRRRMM') = p_period_ym) DESC;
+
+      l_period_ym VARCHAR2(10);
+      l_batch_num NUMBER := 0;
+      l_detail_num NUMBER := 0;
+   BEGIN
+      --updae invoice attribute15 null
+      UPDATE ap_invoices_all t
+         SET t.attribute15 = NULL
+       WHERE TO_CHAR(t.gl_date
+                    ,'RRRRMM') = p_period_ym;
+
+      COMMIT;
+
+      --UPDATE BATCH INVOICE
+      FOR lc IN c
+      LOOP
+         l_batch_num :=   l_batch_num
+                        + 1;
+
+         UPDATE ap_invoices_all aia
+            SET aia.attribute15 = l_batch_num
+          WHERE aia.org_id = lc.org_id
+                AND aia.vendor_id = lc.vendor_id
+                AND aia.vendor_site_id = lc.vendor_site_id
+                AND aia.invoice_type_lookup_code = lc.invoice_type_lookup_code
+                AND aia.invoice_id = lc.invoice_id;
+
+         --dbms_output.put_line(LC.INVOICE_ID);
+         COMMIT;
+      END LOOP;
+   END generate_total_seq;
+
+   -------------------------------------------------------------------------------------
+   PROCEDURE main(errbuf                 OUT VARCHAR2
+                 ,retcode                OUT VARCHAR2
+                 ,p_org_id            IN     NUMBER
+                 ,p_user_id           IN     NUMBER
+                 ,p_batch_name        IN     VARCHAR2
+                 ,p_monthly_cycle     IN     VARCHAR2
+                 ,p_pay_group_code_fm IN     VARCHAR2
+                 ,p_pay_group_code_to IN     VARCHAR2
+                 ,p_period_name       IN     VARCHAR2
+                 ,p_payment_method    IN     VARCHAR2
+                 ,p_due_date          IN     VARCHAR2
+                 ,p_page_group        IN     VARCHAR2 --'PAY_GROUP_PERIOD_NAME_DUE_DATE'表示依付款群組、應付帳款期間、排定付款日期同頁
+                                                     )
+   IS
+      i NUMBER := 1;
+      j NUMBER := 1;
+      k NUMBER := 1;
+      v_user VARCHAR2(30);
+      v_gl_date_fm DATE;
+      v_gl_date_to DATE;
+      v_registration_num VARCHAR2(10) := '';
+      v_page_group VARCHAR2(32767);
+      v_error EXCEPTION;
+      v_call_error EXCEPTION;
+   BEGIN
+      --Mo_Global.init ('SQLAP');
+      EXECUTE IMMEDIATE 'ALTER SESSION SET NLS_LANGUAGE = ''AMERICAN''';
+
+      SELECT gps.start_date
+            ,gps.end_date
+        INTO v_gl_date_fm
+            ,v_gl_date_to
+        FROM gl_period_statuses gps
+       WHERE 1 = 1
+             AND gps.ledger_id IN (SELECT hou.set_of_books_id
+                                     FROM hr_operating_units hou
+                                    WHERE hou.organization_id = p_org_id)
+             AND gps.period_name = p_period_name
+             AND gps.application_id IN (SELECT fa.application_id
+                                          FROM fnd_application fa
+                                         WHERE fa.application_short_name = 'SQLAP');
+
+      xxapry008_pkg.generate_total_seq(TO_CHAR(v_gl_date_fm
+                                              ,'RRRRMM'));
+
+      SELECT description
+        INTO v_user
+        FROM fnd_user
+       WHERE user_id = p_user_id;
+
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'--------------------');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_ORG_ID='''
+                             || p_org_id
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_USER_ID='''
+                             || p_user_id
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_BATCH_NAME='''
+                             || p_batch_name
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_PAY_GROUP_CODE_FMD='''
+                             || p_pay_group_code_fm
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_PAY_GROUP_CODE_TO='''
+                             || p_pay_group_code_to
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_PERIOD_NAME='''
+                             || p_period_name
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_MONTHLY_CYCLE='''
+                             || p_monthly_cycle
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'P_PAYMENT_METHOD='''
+                             || p_payment_method
+                             || '''');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,'---------------------');
+      apps.fnd_file.put_line(apps.fnd_file.LOG
+                            ,fnd_profile.VALUE('ICX_CLIENT_IANA_ENCODING'));
+
+      --apps.FND_FILE.put_line(apps.fnd_file.OUTPUT,'<?xml version="1.0" encoding="'||fnd_profile.value('ICX_CLIENT_IANA_ENCODING')||'"?>');
+      --apps.FND_FILE.put_line(apps.fnd_file.OUTPUT,'<?xml version="1.0" encoding="BIG5"?>');
+      apps.fnd_file.put_line(apps.fnd_file.output
+                            ,'<?xml version="1.0"?>');
+      apps.fnd_file.put_line(apps.fnd_file.output
+                            ,'<ROWSET>');
+      apps.fnd_file.put_line(apps.fnd_file.output
+                            ,'<REPORT_NAME>XXAPRY008</REPORT_NAME>');
+
+
+      FOR c_ap IN (  SELECT aia.org_id
+                           ,aba.batch_name
+                           ,aia.invoice_id
+                           ,aia.vendor_id
+                           ,av.vendor_name
+                           ,aia.invoice_num
+                           ,DECODE(aps.payment_method_code, 'CHECK', '', ibybnk.masked_bank_account_num) bank_account_num
+                           ,DECODE(aps.payment_method_code
+                                  ,'CHECK', ''
+                                  ,(cbb.bank_name
+                                    || cbb.bank_branch_name))
+                               bank_account_name
+                           ,  NVL((SELECT SUM(NVL(ail.amount, 0))
+                                     FROM ap_invoice_lines_all ail
+                                    WHERE ail.invoice_id = aia.invoice_id
+                                          AND ail.line_type_lookup_code <> 'PREPAY')
+                                 ,0)
+                            - NVL(ap_invoices_utility_pkg.get_prepay_amount_applied(aia.invoice_id), 0)
+                               invoice_amount
+                           ,CASE
+                               WHEN ROW_NUMBER()
+                                       OVER(PARTITION BY aia.pay_group_lookup_code
+                                                        ,av.vendor_name
+                                                        ,TO_CHAR(aps.due_date
+                                                                ,'YYYYMMDD')
+                                            ORDER BY
+                                               aia.pay_group_lookup_code
+                                              ,av.vendor_name
+                                              ,TO_CHAR(aps.due_date
+                                                      ,'YYYYMMDD')
+                                              ,aba.batch_name
+                                              ,aia.invoice_num) = 1
+                               THEN
+                                  SUM(  NVL(ap_invoices_utility_pkg.get_line_total(aia.invoice_id), 0)
+                                      - NVL(ap_invoices_pkg.get_amount_withheld(aia.invoice_id), 0)
+                                      - NVL(ap_prepay_utils_pkg.get_prepaid_amount(aia.invoice_id), 0))
+                                  OVER(PARTITION BY aia.pay_group_lookup_code
+                                                   ,av.vendor_name
+                                                   ,TO_CHAR(aps.due_date
+                                                           ,'YYYYMMDD'))
+                            END
+                               invoice_sum
+                           ,(SELECT NVL(SUM(aid.amount), 0)
+                               FROM ap_invoice_distributions_all aid
+                                   ,gl_code_combinations gcc
+                              WHERE aid.dist_code_combination_id = gcc.code_combination_id
+                                    AND aia.org_id = aia.org_id
+                                    AND aia.invoice_id = aid.invoice_id
+                                    AND gcc.segment3 = '119071')
+                               tax_amount
+                           ,at.name terms_name
+                           ,aia.pay_group_lookup_code
+                            || '-'
+                            || flv.meaning
+                               pay_group
+                           ,TO_CHAR(aps.due_date
+                                   ,'YYYY/MM/DD')
+                               due_date
+                           ,aps.payment_method_code
+                           ,ipm.payment_method_name
+                           ,DECODE(NVL(aia.attribute15, 'XXX')
+                                  ,'XXX', ''
+                                  ,'批次'
+                                   || aia.attribute15)
+                               total_seq
+                           ,DECODE(p_page_group --p_page_group --'PAY_GROUP_PERIOD_NAME_DUE_DATE'
+                                  ,'PAY_GROUP_PERIOD_NAME_DUE_DATE', aia.pay_group_lookup_code
+                                                                     || '-'
+                                                                     || flv.meaning
+                                                                     || CHR(10)
+                                                                     || '排定付款日'
+                                                                     || TO_CHAR(aps.due_date
+                                                                               ,'YYYY/MM/DD')
+                                  ,aia.pay_group_lookup_code
+                                   || '-'
+                                   || flv.meaning)
+                               page_group
+                           ,aia.pay_group_lookup_code
+                       FROM ap_batches_all aba
+                           ,ap_invoices_all aia
+                           ,ap_payment_schedules_all aps
+                           ,ap_suppliers av
+                           ,ap_terms_vl at
+                           ,fnd_lookup_values flv
+                           ,iby_ext_bank_accounts ibybnk
+                           ,ce_bank_branches_v cbb
+                           ,iby_payment_methods_tl ipm
+                      WHERE aba.batch_id(+) = aia.batch_id
+                            AND aia.invoice_id = aps.invoice_id
+                            AND aps.payment_method_code = ipm.payment_method_code
+                            AND ipm.language = 'ZHT'
+                            AND aia.vendor_id = av.vendor_id(+)
+                            AND aia.external_bank_account_id = ibybnk.ext_bank_account_id(+)
+                            AND cbb.branch_party_id(+) = ibybnk.branch_id
+                            AND cbb.bank_party_id(+) = ibybnk.bank_id
+                            AND aia.terms_id = at.term_id(+)
+                            AND aia.pay_group_lookup_code = flv.lookup_code(+)
+                            AND flv.lookup_type = 'PAY GROUP'
+                            AND flv.language = 'ZHT'
+                            AND ap_invoices_pkg.get_approval_status(aia.invoice_id
+                                                                   ,aia.invoice_amount
+                                                                   ,aia.payment_status_flag
+                                                                   ,aia.invoice_type_lookup_code) IN ('APPROVED'
+                                                                                                     ,'UNPAID')
+                            AND aia.org_id = p_org_id --87 -- p_org_id --87
+                            AND TO_CHAR(aia.gl_date
+                                       ,'MON-YY') = p_period_name -- 'MAY-23' -- p_period_name -- 'MAY-23'
+                            AND aba.batch_name = NVL(p_batch_name, aba.batch_name)
+                            AND TO_CHAR(aps.due_date
+                                       ,'YYYY/MM/DD') = NVL(p_due_date
+                                                           ,TO_CHAR(aps.due_date
+                                                                   ,'YYYY/MM/DD'))
+                            AND (aia.pay_group_lookup_code BETWEEN p_pay_group_code_fm AND p_pay_group_code_to
+                                 OR p_pay_group_code_fm IS NULL
+                                 OR p_pay_group_code_to IS NULL)
+                            AND flv.meaning LIKE
+                                   '%'
+                                   || p_monthly_cycle
+                            AND flv.meaning NOT LIKE
+                                   '%'
+                                   || DECODE(p_monthly_cycle, '月結', '半月結', 'NULL')
+                            AND aps.payment_method_code = NVL(p_payment_method, aps.payment_method_code)
+                   --AND AIA.GL_DATE >= TO_DATE('20170301','YYYYMMDD')
+                   ORDER BY page_group
+                           ,av.vendor_name
+                           ,aps.due_date
+                           ,aba.batch_name
+                           ,aia.invoice_num)
+      LOOP
+         IF v_page_group IS NOT NULL
+            AND v_page_group != c_ap.page_group
+         THEN
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'</G_PAY_GROUP>');
+         END IF;
+
+         IF v_page_group IS NULL
+            OR v_page_group != c_ap.page_group
+         THEN
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'<G_PAY_GROUP number="'
+                                   || j
+                                   || '">');
+
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'  <PAGE_GROUP>'
+                                   || c_ap.page_group
+                                   || '</PAGE_GROUP>');
+
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'  <USER>'
+                                   || v_user
+                                   || '</USER>');
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'  <PERIOD_NAME>'
+                                   || p_period_name
+                                   || '</PERIOD_NAME>');
+            v_page_group := c_ap.page_group;
+            j :=   j
+                 + 1;
+            k := 1;
+         END IF;
+
+
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'  <G_BATCH_NAME num="'
+                                || i
+                                || '">');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <BATCH_NAME>'
+                                || xxfnd_utility_pkg.replace_for_xml(c_ap.batch_name)
+                                || '</BATCH_NAME>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <INVOICE_AMOUNT>'
+                                || c_ap.invoice_amount
+                                || '</INVOICE_AMOUNT>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <INVOICE_ID>'
+                                || c_ap.invoice_id
+                                || '</INVOICE_ID>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <INVOICE_NUM>'
+                                || xxfnd_utility_pkg.replace_for_xml(c_ap.invoice_num)
+                                || '</INVOICE_NUM>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <ORG_ID>'
+                                || c_ap.org_id
+                                || '</ORG_ID>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <BANK_ACCOUNT_NUM>'
+                                || c_ap.bank_account_num
+                                || '</BANK_ACCOUNT_NUM>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <BANK_ACCOUNT_NAME>'
+                                || c_ap.bank_account_name
+                                || '</BANK_ACCOUNT_NAME>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <SEQ>'
+                                || i
+                                || '</SEQ>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <TAX_AMOUNT>'
+                                || c_ap.tax_amount
+                                || '</TAX_AMOUNT>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <TERMS_NAME>'
+                                || c_ap.terms_name
+                                || '</TERMS_NAME>');
+
+
+
+         IF NVL(c_ap.total_seq, 'XXX') = 'XXX'
+         THEN
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'    <TOTAL_SEQ>'
+                                   || k
+                                   || '</TOTAL_SEQ>');
+         ELSE
+            apps.fnd_file.put_line(apps.fnd_file.output
+                                  ,'    <TOTAL_SEQ>'
+                                   || c_ap.total_seq
+                                   || '</TOTAL_SEQ>');
+         END IF;
+
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <INVOICE_SUM>'
+                                || c_ap.invoice_sum
+                                || '</INVOICE_SUM>');
+
+         BEGIN
+            SELECT DECODE(LENGTH(h.vat_registration_num), 8, h.vat_registration_num, '')
+              INTO v_registration_num
+              FROM po_vendors h
+             WHERE 1 = 1
+                   AND h.vendor_id = c_ap.vendor_id;
+         EXCEPTION
+            WHEN OTHERS
+            THEN
+               v_registration_num := '';
+         END;
+
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <VENDOR_NAME>'
+                                || xxfnd_utility_pkg.replace_for_xml(c_ap.vendor_name)
+                                || '</VENDOR_NAME>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <REGISTRATION_NUM>'
+                                || v_registration_num
+                                || '</REGISTRATION_NUM>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <DUE_DATE>'
+                                || c_ap.due_date
+                                || '</DUE_DATE>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'    <PAYMENT_METHOD_NAME>'
+                                || c_ap.payment_method_name
+                                || '</PAYMENT_METHOD_NAME>');
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'  </G_BATCH_NAME>');
+
+
+         i :=   i
+              + 1;
+         k :=   k
+              + 1;
+      END LOOP;
+
+      IF v_page_group IS NOT NULL
+      THEN
+         apps.fnd_file.put_line(apps.fnd_file.output
+                               ,'</G_PAY_GROUP>');
+      END IF;
+
+      apps.fnd_file.put_line(apps.fnd_file.output
+                            ,'</ROWSET>');
+   EXCEPTION
+      WHEN v_call_error
+      THEN
+         retcode := 2;
+      WHEN v_error
+      THEN
+         retcode := 2;
+         errbuf := errbuf
+                   || CHR(10)
+                   || '追縱報錯程式:'
+                   || CHR(10)
+                   || DBMS_UTILITY.format_error_stack
+                   || DBMS_UTILITY.format_error_backtrace
+                   || DBMS_UTILITY.format_call_stack;
+      WHEN OTHERS
+      THEN
+         retcode := 2;
+         errbuf := errbuf
+                   || CHR(10)
+                   || '追縱報錯程式:'
+                   || CHR(10)
+                   || DBMS_UTILITY.format_error_stack
+                   || DBMS_UTILITY.format_error_backtrace
+                   || DBMS_UTILITY.format_call_stack;
+   END main;
+-------------------------------------------------------------------------------------
+END xxapry008_pkg;
 /
 
 
