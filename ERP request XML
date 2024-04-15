@@ -479,3 +479,321 @@ EXCEPTION
       DBMS_OUTPUT.put_line('</ERRMSG>');
       DBMS_OUTPUT.put_line('</MAIN>');
 END;
+CREATE OR REPLACE PROCEDURE XXMULTISHEET(RET_MSG OUT VARCHAR2
+                                         ,RET_CODE OUT VARCHAR2) IS
+
+ sqlp varchar2(1000);
+ sql1 varchar2(1000);
+ sql2 varchar2(1000);
+ sql3 varchar2(1000);
+BEGIN
+sqlp := '';
+sql1 := '';
+sql2 := '';
+sql3 := '';
+
+
+sql1 := '
+    select ''報表A'' as C1_SHEET_NAME from dual
+    UNION
+    select ''報表B'' as C1_SHEET_NAME from dual
+';
+
+sql2 := '
+select * from (
+select ''報表A'' as SHEET_NAME
+, ''AAA1'' as COLUMNA1
+, ''BBB1'' as COLUMNA2
+, ''CCC1'' as COLUMNA3 from dual
+UNION
+select ''報表B'' as SHEET_NAME
+, ''AAA3'' as COLUMNB1
+, ''BBB3'' as COLUMNB2
+, ''CCC3'' as COLUMNB3 from dual
+)
+where SHEET_NAME = ''C1_SHEET_NAME''
+';
+
+
+
+XXFND_XMLCREATOR_SP(sqlp,sql1, sql2, sql3);
+
+
+
+
+EXCEPTION
+  WHEN OTHERS THEN
+    ROLLBACK;
+END XXJBHOMEWORK2;
+
+CREATE OR REPLACE PROCEDURE APPS.XXFND_XMLCREATOR_SP(p_query IN VARCHAR2
+                                            ,p_query1 IN VARCHAR2
+                                            ,p_query2 IN VARCHAR2
+                                            ,p_query3 IN VARCHAR2) IS
+
+    l_dummy             NUMBER;
+    --TYPE column_map_type IS TABLE OF NUMBER INDEX BY VARCHAR2(32767);
+
+    query2            VARCHAR2(32767);
+    query3            VARCHAR2(32767);
+
+    l_cursor           INTEGER;
+    l_description_table dbms_sql.desc_tab3;
+    --l_mapping_table column_map_type;
+    l_column_value  VARCHAR2(4000);
+
+    l_cursor_1           INTEGER;
+    l_description_table_1 dbms_sql.desc_tab3;
+    --l_mapping_table_1 column_map_type;
+    l_column_value_1  VARCHAR2(4000);
+
+    l_cursor_2           INTEGER;
+    l_description_table_2 dbms_sql.desc_tab3;
+    --l_mapping_table_2 column_map_type;
+    l_column_value_2  VARCHAR2(4000);
+
+    l_cursor_3           INTEGER;
+    l_description_table_3 dbms_sql.desc_tab3;
+    --l_mapping_table_3 column_map_type;
+    l_column_value_3  VARCHAR2(4000);
+
+    l_injection_error          EXCEPTION;
+    l_noPara_error          EXCEPTION;
+
+BEGIN
+    DBMS_OUTPUT.ENABLE(buffer_size=>null);
+
+    fnd_file.put_line(fnd_file.output, '<?xml version = ''1.0'' encoding = ''UTF-8''?>');
+    fnd_file.new_line(fnd_file.output,1);
+    fnd_file.put_line(fnd_file.output, '<MAIN>');
+    fnd_file.new_line(fnd_file.output,1);
+    dbms_output.put_line('<?xml version = ''1.0'' encoding = ''UTF-8''?>');
+    dbms_output.put_line('<MAIN>');
+
+    --印參數
+    IF (p_query IS NOT NULL) THEN
+      --RAISE l_noPara_error;
+    --ELSE
+        l_cursor := dbms_sql.open_cursor;
+        dbms_sql.parse(l_cursor, p_query, dbms_sql.native);
+        dbms_sql.describe_columns3(l_cursor, l_dummy, l_description_table);
+        FOR i IN 1 .. l_description_table.count LOOP
+                  --    l_mapping_table(l_description_table(i).col_name) := i;
+            dbms_sql.define_column(l_cursor, i, l_column_value, 4000);
+        END LOOP;
+        l_dummy := dbms_sql.execute(l_cursor);
+        LOOP
+            EXIT WHEN dbms_sql.fetch_rows(l_cursor) <= 0;
+
+            FOR i IN 1 .. l_description_table.count LOOP
+                --dbms_sql.column_value(l_cursor, l_mapping_table(l_description_table(i).col_name), l_column_value);
+                IF NOT regexp_like(l_column_value,'^[^:=;\'']+$')
+                OR REGEXP_INSTR(l_column_value,'--',1) >= 1
+                OR REGEXP_INSTR(UPPER(l_column_value),'SELECT',1) >= 1
+                OR REGEXP_INSTR(UPPER(l_column_value),'INSERT',1) >= 1
+                OR REGEXP_INSTR(UPPER(l_column_value),'UPDATE',1) >= 1
+                OR REGEXP_INSTR(UPPER(l_column_value),'DELETE',1) >= 1
+                OR REGEXP_INSTR(UPPER(l_column_value),'DROP',1) >= 1
+                OR REGEXP_INSTR(UPPER(l_column_value),'CREATE',1) >= 1
+                THEN
+                  RAISE l_injection_error;
+                END IF;
+                                
+                dbms_sql.column_value(l_cursor, i, l_column_value);
+
+                fnd_file.put(fnd_file.output, '<'||l_description_table(i).col_name||'>');
+                fnd_file.put(fnd_file.output, l_column_value);
+                fnd_file.put_line(fnd_file.output, '</'||l_description_table(i).col_name||'>');
+
+                dbms_output.put('<'||l_description_table(i).col_name||'>');
+                dbms_output.put(l_column_value);
+                dbms_output.put_line('</'||l_description_table(i).col_name||'>');
+
+            END LOOP;
+        END LOOP;
+        dbms_sql.close_cursor(l_cursor);
+    END IF;
+
+    l_cursor_1 := dbms_sql.open_cursor;
+    dbms_sql.parse(l_cursor_1, p_query1, dbms_sql.native);
+    dbms_sql.describe_columns3(l_cursor_1, l_dummy, l_description_table_1);
+    FOR i IN 1 .. l_description_table_1.count LOOP
+        --l_mapping_table_1(l_description_table_1(i).col_name) := i;
+        dbms_sql.define_column(l_cursor_1, i, l_column_value_1, 4000);
+    END LOOP;
+    l_dummy := dbms_sql.execute(l_cursor_1);
+    LOOP
+        EXIT WHEN dbms_sql.fetch_rows(l_cursor_1) <= 0;
+
+        query2 := p_query2;
+
+        fnd_file.put_line(fnd_file.output, '<G_1>');
+        fnd_file.new_line(fnd_file.output,1);
+        dbms_output.put_line('<G_1>');
+        --產生query1的欄位資料
+        FOR i IN 1 .. l_description_table_1.count LOOP
+            --dbms_sql.column_value(l_cursor_1, l_mapping_table_1(l_description_table_1(i).col_name), l_column_value_1);
+            
+            dbms_sql.column_value(l_cursor_1, i, l_column_value_1);
+            fnd_file.put(fnd_file.output, '<'||l_description_table_1(i).col_name||'>');
+            fnd_file.put(fnd_file.output, replace(l_column_value_1, '&', '＆'));
+            fnd_file.put_line(fnd_file.output, '</'||l_description_table_1(i).col_name||'>');
+
+            dbms_output.put('<'||l_description_table_1(i).col_name||'>');
+            dbms_output.put(replace(l_column_value_1, '&', '＆'));
+            dbms_output.put_line('</'||l_description_table_1(i).col_name||'>');
+
+            --把query1的參數傳到query2
+            IF NOT(query2 IS NULL) THEN
+                IF INSTR(query2, 'C1_') > 0 AND INSTR(l_description_table_1(i).col_name, 'C1_') > 0 THEN
+                    query2 := replace(query2, l_description_table_1(i).col_name, l_column_value_1);
+                END IF;
+            END IF;
+        END LOOP;
+
+        IF NOT(query2 IS NULL) THEN
+            l_cursor_2 := dbms_sql.open_cursor;
+            dbms_sql.parse(l_cursor_2, query2, dbms_sql.native);
+            dbms_sql.describe_columns3(l_cursor_2, l_dummy, l_description_table_2);
+            FOR j IN 1 .. l_description_table_2.count LOOP
+                --l_mapping_table_2(l_description_table_2(j).col_name) := j;
+                dbms_sql.define_column(l_cursor_2, j, l_column_value_2, 4000);
+            END LOOP;
+            l_dummy := dbms_sql.execute(l_cursor_2);
+
+            LOOP
+                EXIT WHEN dbms_sql.fetch_rows(l_cursor_2) <= 0;
+
+                query3 := p_query3;
+
+                fnd_file.put_line(fnd_file.output, '<G_2>');
+                fnd_file.new_line(fnd_file.output,1);
+                dbms_output.put_line('<G_2>');
+                FOR i IN 1 .. l_description_table_1.count LOOP
+                    --dbms_sql.column_value(l_cursor_1, l_mapping_table_1(l_description_table_1(i).col_name), l_column_value_1);
+                    dbms_sql.column_value(l_cursor_1, i, l_column_value_1);
+
+                    --把query1的參數傳到query3
+                    IF NOT(query3 IS NULL) THEN
+                        IF INSTR(query3, 'C1_') > 0 AND INSTR(l_description_table_1(i).col_name, 'C1_') > 0 THEN
+                            query3 := replace(query3, l_description_table_1(i).col_name, l_column_value_1);
+                        END IF;
+                    END IF;
+                END LOOP;
+                FOR j IN 1 .. l_description_table_2.count LOOP
+                    --dbms_sql.column_value(l_cursor_2, l_mapping_table_2(l_description_table_2(j).col_name), l_column_value_2);
+                    dbms_sql.column_value(l_cursor_2, j, l_column_value_2);
+
+                    fnd_file.put(fnd_file.output, '<'||l_description_table_2(j).col_name||'>');
+                    fnd_file.put(fnd_file.output, replace(l_column_value_2, '&', '＆'));
+                    fnd_file.put_line(fnd_file.output, '</'||l_description_table_2(j).col_name||'>');
+
+                    dbms_output.put('<'||l_description_table_2(j).col_name||'>');
+                    dbms_output.put(replace(l_column_value_2, '&', '＆'));
+                    dbms_output.put_line('</'||l_description_table_2(j).col_name||'>');
+
+                    --把query2的參數傳到query3
+                    IF NOT(query3 IS NULL) THEN
+                        IF INSTR(query3, 'C2_') > 0 AND INSTR(l_description_table_2(j).col_name, 'C2_') > 0 THEN
+                            query3 := replace(query3, l_description_table_2(j).col_name, l_column_value_2);
+                        END IF;
+                    END IF;
+                END LOOP;
+
+
+                IF NOT(query3 IS NULL) THEN
+                    l_cursor_3 := dbms_sql.open_cursor;
+                    dbms_sql.parse(l_cursor_3, query3, dbms_sql.native);
+                    dbms_sql.describe_columns3(l_cursor_3, l_dummy, l_description_table_3);
+                    FOR k IN 1 .. l_description_table_3.count LOOP
+                        --l_mapping_table_3(l_description_table_3(k).col_name) := k;
+                        dbms_sql.define_column(l_cursor_3, k, l_column_value_3, 4000);
+                    END LOOP;
+                    l_dummy := dbms_sql.execute(l_cursor_3);
+                    LOOP
+                        EXIT WHEN dbms_sql.fetch_rows(l_cursor_3) <= 0;
+
+                        fnd_file.put_line(fnd_file.output, '<G_3>');
+                        fnd_file.new_line(fnd_file.output,1);
+                        dbms_output.put_line('<G_3>');
+                        FOR k IN 1 .. l_description_table_3.count LOOP
+                            --dbms_sql.column_value(l_cursor_3, l_mapping_table_3(l_description_table_3(k).col_name), l_column_value_3);
+                            dbms_sql.column_value(l_cursor_3, k, l_column_value_3);
+
+                            fnd_file.put(fnd_file.output, '<'||l_description_table_3(k).col_name||'>');
+                            fnd_file.put(fnd_file.output, replace(l_column_value_3, '&', '＆'));
+                            fnd_file.put_line(fnd_file.output, '</'||l_description_table_3(k).col_name||'>');
+
+                            dbms_output.put('<'||l_description_table_3(k).col_name||'>');
+                            dbms_output.put(replace(l_column_value_3, '&', '＆'));
+                            dbms_output.put_line('</'||l_description_table_3(k).col_name||'>');
+                        END LOOP;
+                        fnd_file.put_line(fnd_file.output, '</G_3>');
+                        fnd_file.new_line(fnd_file.output,1);
+                        dbms_output.put_line('</G_3>');
+                    END LOOP;
+                    dbms_sql.close_cursor(l_cursor_3);
+                END IF;
+                fnd_file.put_line(fnd_file.output, '</G_2>');
+                fnd_file.new_line(fnd_file.output,1);
+                dbms_output.put_line('</G_2>');
+            END LOOP;
+            dbms_sql.close_cursor(l_cursor_2);
+        END IF;
+        fnd_file.put_line(fnd_file.output, '</G_1>');
+        fnd_file.new_line(fnd_file.output,1);
+        dbms_output.put_line('</G_1>');
+    END LOOP;
+    dbms_sql.close_cursor(l_cursor_1);
+
+    dbms_output.put('<ERRMSG>');
+    dbms_output.put('');
+    dbms_output.put_line('</ERRMSG>');
+    dbms_output.put_line('</MAIN>');
+    fnd_file.put(fnd_file.output, '<ERRMSG>');
+    fnd_file.put(fnd_file.output, '');
+    fnd_file.put_line(fnd_file.output, '</ERRMSG>');
+    fnd_file.new_line(fnd_file.output,1);
+    fnd_file.put_line(fnd_file.output, '</MAIN>');
+    fnd_file.new_line(fnd_file.output,1);
+
+EXCEPTION
+  WHEN l_injection_error THEN
+        dbms_output.put('<ERRMSG>');
+        dbms_output.put('SQL Injection Error');
+        dbms_output.put_line('</ERRMSG>');
+        dbms_output.put_line('</MAIN>');
+        fnd_file.put(fnd_file.output, '<ERRMSG>');
+        fnd_file.put(fnd_file.output, 'SQL Injection Error');
+        fnd_file.put_line(fnd_file.output, '</ERRMSG>');
+        fnd_file.new_line(fnd_file.output,1);
+        fnd_file.put_line(fnd_file.output, '</MAIN>');
+        fnd_file.new_line(fnd_file.output,1);
+  WHEN l_noPara_error THEN
+        dbms_output.put('<ERRMSG>');
+        dbms_output.put('Parameter SQL Required(sqlp)');
+        dbms_output.put_line('</ERRMSG>');
+        dbms_output.put_line('</MAIN>');
+        fnd_file.put(fnd_file.output, '<ERRMSG>');
+        fnd_file.put(fnd_file.output, 'SQL Injection Error');
+        fnd_file.put_line(fnd_file.output, '</ERRMSG>');
+        fnd_file.new_line(fnd_file.output,1);
+        fnd_file.put_line(fnd_file.output, '</MAIN>');
+        fnd_file.new_line(fnd_file.output,1);
+    WHEN OTHERS THEN
+        fnd_file.put(fnd_file.output, '<ERRMSG>');
+        fnd_file.put(fnd_file.output, 'Region not present '||sqlerrm);
+        fnd_file.put_line(fnd_file.output, '</ERRMSG>');
+        fnd_file.new_line(fnd_file.output,1);
+        fnd_file.put_line(fnd_file.output, '</MAIN>');
+        fnd_file.new_line(fnd_file.output,1);
+        dbms_output.put('<ERRMSG>');
+        dbms_output.put('Region not present '||sqlerrm);
+        dbms_output.put_line('</ERRMSG>');
+        dbms_output.put_line('</MAIN>');
+    ROLLBACK;
+
+END XXFND_XMLCREATOR_SP;
+/
+
+
