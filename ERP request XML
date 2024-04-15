@@ -479,6 +479,22 @@ EXCEPTION
       DBMS_OUTPUT.put_line('</ERRMSG>');
       DBMS_OUTPUT.put_line('</MAIN>');
 END;
+------------------------------------------------------------------
+/*
+<?for-each-group: G_1;./C1_SHEET_NAME?><?spreadsheet-sheet-name:{C1_SHEET_NAME}?> <?if:C1_SHEET_NAME ='報表A'?>
+報表A
+COLUMN1	COLUMN2	COLUMN3
+<?for-each:G_2?> <?COLUMN1?> <?COLUMN2?> <?COLUMN3?> <?end for-each?>
+
+<?end if?><?if:C1_SHEET_NAME ='報表B'?>
+報表B
+COLUMN1	COLUMN2	COLUMN3
+<?for-each:G_2?> <?COLUMN1?> <?COLUMN2?> <?COLUMN3?> <?end for-each?>
+
+<?end if?>
+<?split-by-page-break:?><?end for-each-group?>
+*/
+----------------------------------------------------------------------
 CREATE OR REPLACE PROCEDURE XXMULTISHEET(RET_MSG OUT VARCHAR2
                                          ,RET_CODE OUT VARCHAR2) IS
 
