@@ -1,0 +1,8 @@
+  SELECT *
+    FROM mtl_subinventories_val_v
+   WHERE organization_id IN ( :$flex$.inv_srs_org)
+ORDER BY secondary_inventory_name;
+
+SELECT *
+  FROM jtf.jtf_rs_salesreps t
+ WHERE t.org_id = :$profiles$.org_id;
