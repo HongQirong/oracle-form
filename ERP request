@@ -52,3 +52,153 @@ SELECT DECODE((SELECT terminal_id
                AND l.application_id = &application_id
                AND 1 = 1) p
  WHERE level_seq = 1;
+
+CREATE PACKAGE BODY pkg
+IS
+   PROCEDURE etl(p_date_from IN     VARCHAR2
+                ,p_date_to   IN     VARCHAR2
+                ,p_org_id    IN     NUMBER
+                ,p_result       OUT VARCHAR2 --S是成功，E是錯誤
+                ,p_error_msg    OUT VARCHAR2)
+   IS
+      v_error EXCEPTION; --本程式有錯， 拋例外統一處理錯誤訊息
+      v_call_error EXCEPTION; --呼叫的程式拋出例外，且已有紀錄錯誤程式行
+   BEGIN
+      NULL;
+      p_result := 'S';
+   EXCEPTION
+      WHEN v_call_error
+      THEN
+         p_result := 'E';
+      WHEN v_error
+      THEN
+         p_result := 'E';
+         p_error_msg := SUBSTRB(NULLIF(p_error_msg
+                                       || CHR(10)
+                                      ,CHR(10))
+                                || '此次執行的程式:'
+                                || CHR(10)
+                                || DBMS_UTILITY.format_error_stack
+                                || DBMS_UTILITY.format_error_backtrace
+                                || DBMS_UTILITY.format_call_stack
+                               ,1
+                               ,500);
+      WHEN OTHERS
+      THEN
+         p_result := 'E';
+         p_error_msg := SUBSTR(NULLIF(p_error_msg
+                                      || CHR(10)
+                                     ,CHR(10))
+                               || '此次執行的程式:'
+                               || CHR(10)
+                               || DBMS_UTILITY.format_error_stack
+                               || DBMS_UTILITY.format_error_backtrace
+                               || DBMS_UTILITY.format_call_stack
+                              ,1
+                              ,500);
+   END etl;
+
+   PROCEDURE main_prc(p_date_from IN     VARCHAR2
+                     ,p_date_to   IN     VARCHAR2
+                     ,p_org_id    IN     NUMBER
+                     ,p_result       OUT VARCHAR2 --S是成功，E是錯誤
+                     ,p_error_msg    OUT VARCHAR2)
+   IS
+      v_error EXCEPTION; --本程式有錯， 拋例外統一處理錯誤訊息
+      v_call_error EXCEPTION; --呼叫的程式拋出例外，且已有紀錄錯誤程式行
+   BEGIN
+      NULL;
+      p_result := 'S';
+   EXCEPTION
+      WHEN v_call_error
+      THEN
+         p_result := 'E';
+      WHEN v_error
+      THEN
+         p_result := 'E';
+         p_error_msg := SUBSTRB(NULLIF(p_error_msg
+                                       || CHR(10)
+                                      ,CHR(10))
+                                || '此次執行的程式:'
+                                || CHR(10)
+                                || DBMS_UTILITY.format_error_stack
+                                || DBMS_UTILITY.format_error_backtrace
+                                || DBMS_UTILITY.format_call_stack
+                               ,1
+                               ,500);
+      WHEN OTHERS
+      THEN
+         p_result := 'E';
+         p_error_msg := SUBSTR(NULLIF(p_error_msg
+                                      || CHR(10)
+                                     ,CHR(10))
+                               || '此次執行的程式:'
+                               || CHR(10)
+                               || DBMS_UTILITY.format_error_stack
+                               || DBMS_UTILITY.format_error_backtrace
+                               || DBMS_UTILITY.format_call_stack
+                              ,1
+                              ,500);
+   END main_prc;
+
+   PROCEDURE main_req(p_errbuf       OUT VARCHAR2
+                     ,p_retcode      OUT VARCHAR2 --0正常，2錯誤
+                     ,p_date_from IN     VARCHAR2
+                     ,p_date_to   IN     VARCHAR2
+                     ,p_org_id    IN     NUMBER)
+   IS
+      v_error EXCEPTION; --本程式有錯， 拋例外統一處理錯誤訊息
+      v_call_error EXCEPTION; --呼叫的程式拋出例外，且已有紀錄錯誤程式行
+      v_result VARCHAR2(1);
+   BEGIN
+      fnd_file.put_line(fnd_file.LOG
+                       ,'p_date_from：'
+                        || p_date_s);
+      fnd_file.put_line(fnd_file.LOG
+                       ,'p_date_to：'
+                        || p_date_e);
+      fnd_file.put_line(fnd_file.LOG
+                       ,'p_org_id：'
+                        || p_org_id);
+      NULL;
+
+      IF NVL(v_result, 'E') != 'S'
+      THEN
+         RAISE v_call_error;
+      END IF;
+
+      COMMIT;
+      p_retcode := 0;
+   EXCEPTION
+      WHEN v_call_error
+      THEN
+         p_retcode := 2;
+      WHEN v_error
+      THEN
+         p_retcode := 2;
+         p_errbuf := SUBSTRB(NULLIF(p_errbuf
+                                    || CHR(10)
+                                   ,CHR(10))
+                             || '此次執行的程式:'
+                             || CHR(10)
+                             || DBMS_UTILITY.format_error_stack
+                             || DBMS_UTILITY.format_error_backtrace
+                             || DBMS_UTILITY.format_call_stack
+                            ,1
+                            ,500);
+      WHEN OTHERS
+      THEN
+         p_retcode := 2;
+         p_errbuf := SUBSTR(NULLIF(p_errbuf
+                                   || CHR(10)
+                                  ,CHR(10))
+                            || '此次執行的程式:'
+                            || CHR(10)
+                            || DBMS_UTILITY.format_error_stack
+                            || DBMS_UTILITY.format_error_backtrace
+                            || DBMS_UTILITY.format_call_stack
+                           ,1
+                           ,500);
+   END main_req;
+END pkg;
+/
